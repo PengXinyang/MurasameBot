@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-26",
+  "python": "3.12.13",
+  "tests": 79,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "character_source_unchanged": true,
+  "dashboard_rendered": true,
+  "real_model_tested": false,
+  "real_bilibili_read_write_tested": false,
+  "real_qq_wechat_connected": false,
+  "dependencies": {
+    "httpx": "0.28.1",
+    "PyYAML": "6.0.3",
+    "tzdata": "2026.5",
+    "qrcode": "8.2",
+    "Pillow": "13.0.0",
+    "socksio": "1.0.0",
+    "pytest": "9.1.1"
+  },
+  "source_python_files": 28,
+  "real_pixiv_x_search_tested": false,
+  "proxy_handshakes_tested": [
+    "HTTP forwarding",
+    "HTTPS CONNECT",
+    "SOCKS5",
+    "SOCKS5h"
+  ],
+  "authorized_image_upload_and_repost_mock_tested": true
+}

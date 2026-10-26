@@ -1,0 +1,75 @@
+agent_id: murasame
+owner_person_id: owner
+database: data/murasame.sqlite3
+character_source: character/settings.yml
+character_profile: character/text_profile.yml
+mode: draft  # draft: save proposed comments; auto: dispatch approved policy-compliant actions
+paused: false
+timezone: Asia/Hong_Kong
+text_language: zh
+network:
+  proxy_enabled: true
+  proxy_url: http://127.0.0.1:7890  # HTTP + HTTPS CONNECT; alternatively socks5://127.0.0.1:7890
+model:
+  base_url: ${MURASAME_MODEL_BASE_URL}
+  name: ${MURASAME_MODEL_NAME}
+  api_key: ${MURASAME_MODEL_API_KEY}
+  timeout_seconds: 60
+  daily_call_limit: 150
+  max_context_characters: 18000
+bilibili:
+  credentials: .secrets/bilibili.json
+  robot_uid: ""  # optional expected UID, checked against the logged-in account
+  poll_seconds: 90
+  notification_pages: 3
+  notification_max_age_hours: 24
+  owner_new_videos: true
+  owner_new_dynamics: true
+  repost_owner_videos: true
+  repost_owner_dynamics: true
+bindings:
+  - person_id: owner
+    platform: bilibili
+    external_id: ${MURASAME_OWNER_UID}  # set in .env or override bindings in config.local.yml
+    display_name: ""  # fetched before a real @; never guessed from the persona
+    purpose: owner_video_recommendation
+artwork:
+  enabled: false
+  delivery: image  # image / link / local; image requires an explicit permission below
+  times: ["12:30", "20:30"]
+  weekdays: [0, 1, 2, 3, 4, 5, 6]
+  grace_minutes: 30  # do not replay missed slots after long downtime
+  candidate_limit: 8
+  max_caption_characters: 100
+  keywords: [千恋万花, 丛雨]
+  sources: [pixiv]  # pixiv / x; X requires an official API bearer token
+  pixiv_session: ${MURASAME_PIXIV_SESSION}
+  x_bearer_token: ${MURASAME_X_BEARER_TOKEN}
+  permissions: []  # examples and scope: docs/新增功能配置.md; no implied permission from attribution
+browsing:
+  enabled: false
+  weekdays: [0, 1, 2, 3, 4, 5, 6]  # Monday = 0
+  windows:
+    - start: "19:00"
+      end: "21:00"
+  interval_minutes: 60
+  categories: []  # select IDs using `murasame categories`; empty disables general exploration
+  videos_per_round: 2
+  candidate_limit: 6
+  interests: [游戏开发, 人工智能]
+  owner_interests: []
+limits:
+  daily_comments: 20
+  daily_recommendations: 3
+  min_send_gap_seconds: 30
+  recommendation_gap_minutes: 120
+  action_ttl_minutes: 30
+  request_expiry_days: 7
+  max_task_attempts: 3
+  max_comment_characters: 250
+  max_recommendation_characters: 80
+  max_event_attempts: 3
+web:
+  host: 127.0.0.1
+  port: 8766
+

@@ -1,0 +1,11 @@
+{
+  "event_id": "local-owner-request-001",
+  "platform": "wechat",
+  "account_id": "future-wechat-agent",
+  "actor_id": "your-verified-user-id",
+  "conversation_id": "wechat:private:owner",
+  "kind": "chat",
+  "text": "今晚帮我找一个摄影入门视频，合适的话在B站推荐给我。",
+  "occurred_at": 1793014200,
+  "visibility": "private"
+}

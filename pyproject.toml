@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "murasamebot"
+version = "0.1.0"
+description = "Platform-independent social agent with a Bilibili adapter"
+requires-python = ">=3.12"
+dependencies = ["httpx[socks]>=0.28,<1", "PyYAML>=6,<7", "tzdata>=2024.1", "Pillow>=11,<14"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+login = ["qrcode[pil]>=7.4"]
+
+[project.scripts]
+murasame = "murasamebot.bootstrap.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"murasamebot.bootstrap" = ["dashboard.html"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
