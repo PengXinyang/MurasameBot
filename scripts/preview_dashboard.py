@@ -25,7 +25,7 @@ def main():
     data["model"].update({"base_url": "", "name": "", "api_key": ""})
     path = review / "config.yml"
     path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
-    output = ROOT / "docs" / "dashboard-preview.png"
+    output = ROOT.parent / "docs" / "dashboard-preview.png"
     output.parent.mkdir(exist_ok=True)
     browser = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
     if not browser.is_file():
@@ -35,7 +35,7 @@ def main():
     thread.start()
     try:
         for tab, size, target in (("overview", "1365,1000", output),
-                                  ("settings", "1365,1900", ROOT / "docs" / "settings-preview.png")):
+                                  ("settings", "1365,1900", output.parent / "settings-preview.png")):
             process = subprocess.run([
                 str(browser), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                 "--disable-background-networking", "--disable-component-update", "--disable-sync",

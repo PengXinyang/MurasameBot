@@ -45,7 +45,7 @@ artwork:
   sources: [pixiv]  # pixiv / x; X requires an official API bearer token
   pixiv_session: ${MURASAME_PIXIV_SESSION}
   x_bearer_token: ${MURASAME_X_BEARER_TOKEN}
-  permissions: []  # examples and scope: docs/新增功能配置.md; no implied permission from attribution
+  permissions: []  # local supplementary guide: ../docs/新增功能配置.md; attribution alone is not permission
 browsing:
   enabled: false
   weekdays: [0, 1, 2, 3, 4, 5, 6]  # Monday = 0

@@ -15,3 +15,5 @@ dist/
 build/
 config.local.yml
 
+# Local reports and design documents are kept in the parent workspace.
+/docs/

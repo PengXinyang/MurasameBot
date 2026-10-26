@@ -2,7 +2,7 @@
 
 ## Product scope
 
-Build a reusable social-agent core. Bilibili is the first live platform; later QQ and WeChat adapters must reuse the same identity, persona, memory, intent, scheduling, and action-policy services. See `开发顺序与功能流程.md` and `架构与跨平台记忆设计.md` for requirements. Design documents are not evidence of working integrations.
+Build a reusable social-agent core. Bilibili is the first live platform; later QQ and WeChat adapters must reuse the same identity, persona, memory, intent, scheduling, and action-policy services. Supplemental local design documents, when available, are in the parent workspace: `../开发顺序与功能流程.md` and `../架构与跨平台记忆设计.md`. They are not distributed with the repository and are not evidence of working integrations.
 
 ## Dependency direction
 
