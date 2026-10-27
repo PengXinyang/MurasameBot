@@ -21,20 +21,41 @@ def show(value):
 
 
 def worker_loop(config_path: Path, stop: StopEvent, *, once=False):
-    while not stop.is_set():
-        config = Config(config_path)
-        runtime = build(config)
+    if once:
+        runtime = build(Config(config_path))
         try:
-            if not runtime.model.configured or not runtime.platform.configured:
-                raise ValueError("请先填写本地模型配置并运行 login 完成扫码；可先运行 doctor 或 demo")
             runtime.tick()
-            if once:
-                show(readiness(runtime))
-                return
+            show(readiness(runtime))
         finally:
             runtime.close()
-        # Wait is interruptible, and a fresh config is loaded every cycle.
-        stop.wait(config.data["bilibili"]["poll_seconds"])
+        return
+    from murasamebot.bootstrap.workers import WorkerCoordinator
+    coordinator = WorkerCoordinator(config_path)
+    next_poll = 0.0
+    try:
+        while not stop.is_set():
+            config = Config(config_path)
+            if time.monotonic() >= next_poll:
+                started = time.monotonic()
+                runtime = build(config)
+                try:
+                    if not runtime.model.configured or not runtime.platform.configured:
+                        raise ValueError("请先填写本地模型配置并运行 login 完成扫码；可先运行 doctor 或 demo")
+                    if runtime.store.acquire_lease("worker_tick", time.time(), 1200):
+                        try:
+                            runtime.poll()
+                            runtime.poll_private()
+                            runtime.store.set_setting("last_tick", time.time())
+                        finally:
+                            runtime.store.release_lease("worker_tick")
+                finally:
+                    runtime.close()
+                next_poll = max(time.monotonic() + 1, started + config.data["bilibili"].get("reply_poll_seconds", 15))
+                coordinator.start_background()
+            coordinator.pump(config)
+            stop.wait(1)
+    finally:
+        coordinator.close()
 
 
 def parser() -> argparse.ArgumentParser:
@@ -54,7 +75,7 @@ def parser() -> argparse.ArgumentParser:
     sub.add_parser("pause", help="暂停任务与出站")
     sub.add_parser("resume", help="人工解除暂停；认证错误仍会重新暂停")
     inspect = sub.add_parser("inspect", help="查看本地状态")
-    inspect.add_argument("table", choices=["bindings", "events", "memories", "tasks", "actions", "views", "audit", "model_usage", "model_daily"])
+    inspect.add_argument("table", choices=["bindings", "events", "memories", "tasks", "actions", "views", "audit", "model_usage", "model_daily", "conversation_records", "memory_products", "memory_jobs", "memory_daily"])
     ingest = sub.add_parser("ingest", help="从本地 JSON 导入统一事件；用于接入测试")
     ingest.add_argument("file", type=Path)
     ingest.add_argument("--process", action="store_true", help="立即调用已配置模型处理；可能计费，但不执行发送")
@@ -77,6 +98,9 @@ def parser() -> argparse.ArgumentParser:
 def main(argv=None):
     args = parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # Some platform write URLs contain CSRF parameters. Keep transport URLs out
+    # of normal console logs; product diagnostics live in the scoped audit log.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         config = Config(args.config)
         if args.command == "demo":

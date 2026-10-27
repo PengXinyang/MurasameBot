@@ -1,4 +1,5 @@
 import httpx
+import json
 import pytest
 
 from murasamebot.adapters.models.chat_completions import ChatCompletionsModel
@@ -27,3 +28,41 @@ def test_malformed_model_output_is_not_used_as_a_comment(factory):
     with pytest.raises(ModelError) as exc:
         gateway.decide("reply", {"message": "private-message"})
     assert "private-message" not in str(exc.value) and "secret" not in str(exc.value)
+
+
+@pytest.mark.parametrize("limit", [None, 8192])
+def test_output_limit_uses_provider_default_unless_explicitly_configured(factory, limit):
+    engine, store, model, platform = factory()
+    def handle(request):
+        body = json.loads(request.content)
+        if limit is None:
+            assert "max_tokens" not in body
+        else:
+            assert body["max_tokens"] == limit
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": '{"decision":"reply","text":"你好。"}'}}]})
+    gateway = ChatCompletionsModel(base_url="https://model.invalid", name="model", api_key="secret", store=store,
+                                   timezone="Asia/Hong_Kong", daily_limit=2, max_output_tokens=limit,
+                                   client=httpx.Client(transport=httpx.MockTransport(handle)))
+    assert gateway.decide("reply", {"message": "你好"})["decision"] == "reply"
+
+
+@pytest.mark.parametrize("finish,content,expected", [
+    ("length", '{"decision":', "output_truncated"),
+    ("stop", "", "empty_content"),
+    ("stop", None, "empty_content"),
+    ("stop", "not-json", "invalid_content_json"),
+])
+def test_model_failures_are_classified_without_logging_private_content(factory, finish, content, expected):
+    engine, store, model, platform = factory()
+    response = {"choices": [{"finish_reason": finish, "message": {"content": content, "reasoning_content": "private-reasoning"}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 700, "completion_tokens_details": {"reasoning_tokens": 690}}}
+    gateway = ChatCompletionsModel(base_url="https://model.invalid", name="model", api_key="secret-token", store=store,
+                                   timezone="Asia/Hong_Kong", daily_limit=2,
+                                   client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=response))))
+    with pytest.raises(ModelError):
+        gateway.decide("reply", {"message": "private-source-message"})
+    diagnostic = json.loads(next(row["detail"] for row in store.inspect("audit") if row["kind"] == "model_response_error"))
+    assert diagnostic["error"] == expected and diagnostic["finish_reason"] == finish
+    assert diagnostic["reasoning_tokens"] == 690
+    assert all(secret not in str(diagnostic) for secret in ("private-source-message", "private-reasoning", "secret-token"))
+    assert store.inspect("model_usage")[0]["tokens_out"] == 700

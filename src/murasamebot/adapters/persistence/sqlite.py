@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from murasamebot.domain.models import Action, ContentRef, Document, Event, ModelError, Receipt, stable_id
+from murasamebot.adapters.persistence.memory import MEMORY_SCHEMA, SQLiteMemory, query_terms
 
 
 def dumps(value: Any) -> str:
@@ -73,7 +74,7 @@ CREATE TABLE IF NOT EXISTS audit (
 SCHEMA_LOCK = Lock()
 
 
-class SQLiteStore:
+class SQLiteStore(SQLiteMemory):
     def __init__(self, path: str | Path, agent_id: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,8 +89,18 @@ class SQLiteStore:
                     db.execute("PRAGMA journal_mode=WAL")
                 db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nCOMMIT;")
             version = db.execute("SELECT version FROM schema_version").fetchone()[0]
-            if version != 1:
+            if version == 1:
+                # SQLite backup includes committed WAL pages. Keep a recoverable
+                # v1 copy before the transactional migration; never overwrite it.
+                backup = self.path.with_name(self.path.name + ".v1-backup")
+                if not backup.exists():
+                    with sqlite3.connect(backup) as target:
+                        db.backup(target)
+                db.executescript("BEGIN IMMEDIATE;\n" + MEMORY_SCHEMA + "\nUPDATE schema_version SET version=2;\nCOMMIT;")
+                version = 2
+            if version != 2:
                 raise RuntimeError(f"不兼容的数据库版本：{version}")
+            self._memory_index(db)
 
     @contextmanager
     def connection(self):
@@ -145,6 +156,9 @@ class SQLiteStore:
         return dict(row) if row else None
 
     def _invalidate_person(self, db, person_id, platform):
+        events = [r[0] for r in db.execute("SELECT event_id FROM conversation_records WHERE agent_id=? AND person_id=? AND platform=? AND active=1 UNION SELECT m.event_id FROM memories m JOIN events e ON e.agent_id=m.agent_id AND e.event_id=m.event_id WHERE m.agent_id=? AND m.person_id=? AND json_extract(e.payload,'$.platform')=?", (self.agent_id,person_id,platform,self.agent_id,person_id,platform))]
+        self._invalidate_memory_sources(db,events)
+        db.execute("UPDATE memories SET active=0 WHERE agent_id=? AND person_id=? AND event_id IN (SELECT event_id FROM events WHERE agent_id=? AND json_extract(payload,'$.platform')=?)", (self.agent_id,person_id,self.agent_id,platform))
         db.execute("UPDATE tasks SET state='cancelled',version=version+1,reason='binding_changed' WHERE agent_id=? AND person_id=? AND (target_platform=? OR event_id IN (SELECT event_id FROM events WHERE agent_id=? AND json_extract(payload,'$.platform')=?)) AND state NOT IN ('completed','cancelled','expired','failed')", (self.agent_id, person_id, platform, self.agent_id, platform))
         db.execute("UPDATE actions SET state='cancelled' WHERE agent_id=? AND state IN ('draft','queued') AND json_extract(payload,'$.task_id') IN (SELECT task_id FROM tasks WHERE agent_id=? AND person_id=? AND state='cancelled')", (self.agent_id, self.agent_id, person_id))
         for row in db.execute("SELECT action_id,payload FROM actions WHERE agent_id=? AND state IN ('draft','queued')", (self.agent_id,)).fetchall():
@@ -159,21 +173,44 @@ class SQLiteStore:
 
     def enqueue_event(self, event, *, baseline=False):
         with self.connection() as db:
+            if db.execute("SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?", (self.agent_id,event.event_id)).fetchone():
+                return False
             cur = db.execute("INSERT OR IGNORE INTO events(agent_id,event_id,payload,state) VALUES(?,?,?,?)", (self.agent_id, event.event_id, dumps(event.to_dict()), "baseline" if baseline else "pending"))
+            if not cur.rowcount and event.share_content:
+                previous = db.execute("SELECT payload,state FROM events WHERE agent_id=? AND event_id=?", (self.agent_id, event.event_id)).fetchone()
+                if previous and previous["state"] != "deleted":
+                    old = Event.from_dict(json.loads(previous["payload"]))
+                    if (old.share_content is None and old.platform == event.platform and old.account_id == event.account_id and
+                            old.actor_id == event.actor_id and old.content == event.content):
+                        # Enrich legacy events with a verified parent reference;
+                        # never reset processing state, replay text or revive deletes.
+                        db.execute("UPDATE events SET payload=json_set(payload,'$.share_content',json(?)) WHERE agent_id=? AND event_id=?",
+                                   (dumps(asdict(event.share_content)), self.agent_id, event.event_id))
             return cur.rowcount == 1
 
     def claim_event(self, now):
         with self.transaction() as db:
             db.execute("UPDATE events SET state='pending' WHERE agent_id=? AND state='processing' AND lease_until<?", (self.agent_id, now))
-            row = db.execute("SELECT * FROM events WHERE agent_id=? AND state='pending' AND next_at<=? AND NOT EXISTS (SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') ORDER BY rowid LIMIT 1", (self.agent_id, now)).fetchone()
+            def ordering_key(alias):
+                return f"COALESCE((SELECT 'person:'||b.person_id FROM bindings b WHERE b.agent_id={alias}.agent_id AND b.platform=json_extract({alias}.payload,'$.platform') AND b.external_id=json_extract({alias}.payload,'$.actor_id') AND b.active=1 AND json_extract({alias}.payload,'$.visibility')='private'),'conversation:'||json_extract({alias}.payload,'$.conversation_id'))"
+            row = db.execute(f"SELECT * FROM events WHERE agent_id=? AND state='pending' AND next_at<=? AND NOT EXISTS (SELECT 1 FROM events earlier WHERE earlier.agent_id=events.agent_id AND earlier.event_id!=events.event_id AND {ordering_key('earlier')}={ordering_key('events')} AND (earlier.state='processing' OR (earlier.state='pending' AND earlier.rowid<events.rowid))) AND NOT EXISTS (SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') ORDER BY CASE WHEN json_extract(payload,'$.kind') IN ('mention','post_mention','reply','private_message','chat') THEN 0 ELSE 1 END,rowid LIMIT 1", (self.agent_id, now)).fetchone()
             if not row:
                 return None
-            db.execute("UPDATE events SET state='processing',attempts=attempts+1,lease_until=? WHERE agent_id=? AND event_id=?", (now + 240, self.agent_id, row["event_id"]))
+            db.execute("UPDATE events SET state='processing',attempts=attempts+1,lease_until=? WHERE agent_id=? AND event_id=?", (now + 900, self.agent_id, row["event_id"]))
             return Event.from_dict(json.loads(row["payload"]))
 
     def finish_event(self, event_id, state, reason=""):
         with self.connection() as db:
             db.execute("UPDATE events SET state=?,reason=?,lease_until=0 WHERE agent_id=? AND event_id=? AND state!='deleted'", (state, reason[:500], self.agent_id, event_id))
+            if state == "done":
+                row = db.execute("SELECT payload FROM events WHERE agent_id=? AND event_id=? AND state='done'", (self.agent_id,event_id)).fetchone()
+                if row:
+                    self._archive_event(db,Event.from_dict(json.loads(row[0])))
+
+    def event(self, event_id):
+        with self.connection() as db:
+            row = db.execute("SELECT payload FROM events WHERE agent_id=? AND event_id=? AND state!='deleted'", (self.agent_id, event_id)).fetchone()
+        return Event.from_dict(json.loads(row[0])) if row else None
 
     def retry_event(self, event_id, now, reason, max_attempts):
         with self.transaction() as db:
@@ -182,9 +219,9 @@ class SQLiteStore:
                 state = "failed" if row[0] >= max_attempts else "pending"
                 db.execute("UPDATE events SET state=?,reason=?,next_at=?,lease_until=0 WHERE agent_id=? AND event_id=? AND state!='deleted'", (state, reason[:500], now + min(3600, 120 * 2 ** row[0]), self.agent_id, event_id))
 
-    def memory(self, person_id, scope, purpose, now, *, limit=8):
+    def memory(self, person_id, scope, purpose, now, *, limit=8, query=""):
         # Scope and purpose filtering happens in SQL, before any relevance ranking.
-        if purpose == "public_dialogue":
+        if purpose in {"public_dialogue", "private_dialogue"}:
             scopes = [scope]
         elif purpose == "owner_dialogue":
             scopes = [scope, "person"]
@@ -193,39 +230,54 @@ class SQLiteStore:
         placeholders = ",".join("?" for _ in scopes)
         allowed_purposes = [purpose]
         if purpose == "owner_dialogue":
-            allowed_purposes += ["owner_video_recommendation"]
+            allowed_purposes += ["owner_video_recommendation", "owner_private"]
         pp = ",".join("?" for _ in allowed_purposes)
+        terms=query_terms(query)
+        extra=" AND ("+" OR ".join("instr(lower(text),?)>0" for _ in terms)+")" if terms else ""
+        order="("+"+".join("(instr(lower(text),?)>0)" for _ in terms)+") DESC," if terms else ""
         with self.connection() as db:
-            rows = db.execute(f"SELECT memory_id,text,kind,created_at FROM memories WHERE agent_id=? AND person_id=? AND scope IN ({placeholders}) AND purpose IN ({pp}) AND active=1 AND (valid_until IS NULL OR valid_until>?) ORDER BY created_at DESC LIMIT ?", (self.agent_id, person_id, *scopes, *allowed_purposes, now, limit)).fetchall()
+            rows = db.execute(f"SELECT memory_id,text,kind,created_at FROM memories WHERE agent_id=? AND person_id=? AND scope IN ({placeholders}) AND purpose IN ({pp}) AND active=1 AND (valid_until IS NULL OR valid_until>?){extra} ORDER BY {order}created_at DESC LIMIT ?", (self.agent_id, person_id, *scopes, *allowed_purposes, now,*terms,*terms,limit)).fetchall()
         return [dict(row) for row in rows]
 
     def add_memory(self, person_id, scope, purpose, text, event_id, now, *, kind="preference", valid_until=None):
         memory_id = stable_id(self.agent_id, event_id, kind, purpose, text)
         with self.transaction() as db:
             source = db.execute("SELECT state FROM events WHERE agent_id=? AND event_id=?", (self.agent_id, event_id)).fetchone()
-            if source and source[0] == "deleted":
+            if (source and source[0] == "deleted") or db.execute("SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?", (self.agent_id,event_id)).fetchone():
                 raise ValueError("来源已删除")
             db.execute("INSERT OR IGNORE INTO memories VALUES(?,?,?,?,?,?,?,?,?,?,1)", (self.agent_id, memory_id, person_id, scope, purpose, kind, text, event_id, now, valid_until))
         return memory_id
 
     def forget(self, memory_id):
+        with self.connection() as db:
+            row = db.execute("SELECT event_id FROM memories WHERE agent_id=? AND memory_id=?", (self.agent_id,memory_id)).fetchone()
+        if row:
+            self.forget_source(row[0])
+
+    def forget_source(self, event_id):
         with self.transaction() as db:
-            row = db.execute("SELECT event_id FROM memories WHERE agent_id=? AND memory_id=?", (self.agent_id, memory_id)).fetchone()
-            if not row:
-                return
-            # Tombstone the source so replay cannot recreate derived memories or tasks.
-            db.execute("UPDATE memories SET active=0,text='[已删除]' WHERE agent_id=? AND event_id=?", (self.agent_id, row[0]))
-            db.execute("UPDATE events SET state='deleted',payload=json_set(payload,'$.text','[已删除]') WHERE agent_id=? AND event_id=?", (self.agent_id, row[0]))
-            task_ids = db.execute("SELECT task_id FROM tasks WHERE agent_id=? AND event_id=?", (self.agent_id, row[0])).fetchall()
-            for task in task_ids:
-                self._cancel_task(db, task[0])
-            db.execute("UPDATE tasks SET topic='[已删除]' WHERE agent_id=? AND event_id=?", (self.agent_id, row[0]))
+            self._forget_source(db,event_id)
+
+    def _forget_source(self, db, event_id):
+        row = db.execute("SELECT event_id FROM events WHERE agent_id=? AND event_id=? UNION SELECT event_id FROM memories WHERE agent_id=? AND event_id=?", (self.agent_id,event_id,self.agent_id,event_id)).fetchone()
+        if not row:
+            return
+        self._invalidate_memory_sources(db,[event_id])
+        # Tombstone the source so replay cannot recreate derived memories or tasks.
+        db.execute("UPDATE memories SET active=0,text='[已删除]' WHERE agent_id=? AND event_id=?", (self.agent_id, row[0]))
+        db.execute("UPDATE events SET state='deleted',payload=json_set(payload,'$.text','[已删除]') WHERE agent_id=? AND event_id=?", (self.agent_id, row[0]))
+        task_ids = db.execute("SELECT task_id FROM tasks WHERE agent_id=? AND event_id=?", (self.agent_id, row[0])).fetchall()
+        for task in task_ids:
+            self._cancel_task(db, task[0])
+        db.execute("UPDATE tasks SET topic='[已删除]' WHERE agent_id=? AND event_id=?", (self.agent_id, row[0]))
+        db.execute("UPDATE actions SET state=CASE WHEN state IN ('draft','queued','reviewing') THEN 'cancelled' ELSE state END,payload=json_set(payload,'$.text','[已删除]') WHERE agent_id=? AND json_extract(payload,'$.event_id')=?", (self.agent_id,event_id))
+        db.execute("DELETE FROM settings WHERE agent_id=? AND (key LIKE 'memory_context:%' OR key=?)", (self.agent_id,"private_intent:"+event_id))
 
     def add_task(self, person_id, topic, event_id, memory_id, now, due_at, expires_at, binding_version, *, target_platform, interval_days=0, sensitive=False):
         task_id = stable_id(self.agent_id, "intent", event_id)
         with self.transaction() as db:
             source = db.execute("SELECT state FROM events WHERE agent_id=? AND event_id=?", (self.agent_id, event_id)).fetchone()
-            if source and source[0] == "deleted":
+            if (source and source[0] == "deleted") or db.execute("SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?", (self.agent_id,event_id)).fetchone():
                 raise ValueError("来源已删除")
             db.execute("INSERT OR IGNORE INTO tasks(agent_id,task_id,person_id,topic,event_id,memory_id,created_at,due_at,expires_at,state,binding_version,target_platform,interval_days,sensitive) VALUES(?,?,?,?,?,?,?,?,?,'scheduled',?,?,?,?)", (self.agent_id, task_id, person_id, topic, event_id, memory_id, now, due_at, expires_at, binding_version, target_platform, interval_days, int(sensitive)))
         return task_id
@@ -269,16 +321,20 @@ class SQLiteStore:
 
     def has_action_for_content(self, content_key, now):
         with self.connection() as db:
-            row = db.execute("SELECT 1 FROM actions WHERE agent_id=? AND content_key=? AND kind NOT IN ('reply','owner_repost') AND (state IN ('accepted','unknown','sending') OR (state IN ('draft','queued') AND expires_at>?)) LIMIT 1", (self.agent_id, content_key, now)).fetchone()
+            row = db.execute("SELECT 1 FROM actions WHERE agent_id=? AND content_key=? AND kind NOT IN ('reply','private_reply','owner_repost','like','coin','browse_reply') AND (state IN ('accepted','unknown','sending','reviewing') OR (state IN ('draft','queued') AND expires_at>?)) LIMIT 1", (self.agent_id, content_key, now)).fetchone()
         return bool(row)
 
     def enqueue_action(self, action, *, draft, now):
         with self.transaction() as db:
             content_key = action.content.key if action.content else f"{action.platform}:conversation:{action.conversation_id}"
-            if action.kind != "reply":
-                group = "kind='owner_repost'" if action.kind == "owner_repost" else "kind NOT IN ('reply','owner_repost')"
-                exists = db.execute(f"SELECT 1 FROM actions WHERE agent_id=? AND content_key=? AND {group} AND (state IN ('accepted','unknown','sending') OR (state IN ('draft','queued') AND expires_at>?))", (self.agent_id, content_key, now)).fetchone()
-                if exists:
+            if action.kind not in {"reply", "private_reply"}:
+                if action.kind == "browse_reply":
+                    exists = db.execute("SELECT 1 FROM actions WHERE agent_id=? AND dedup_key=? AND (state IN ('accepted','unknown','sending','reviewing') OR (state IN ('draft','queued') AND expires_at>?))", (self.agent_id, action.dedup_key, now)).fetchone()
+                    if exists:
+                        return False
+                group = f"kind='{action.kind}'" if action.kind in {"owner_repost", "like", "coin", "browse_reply"} else "kind NOT IN ('reply','private_reply','owner_repost','like','coin','browse_reply')"
+                exists = db.execute(f"SELECT 1 FROM actions WHERE agent_id=? AND content_key=? AND {group} AND (state IN ('accepted','unknown','sending','reviewing') OR (state IN ('draft','queued') AND expires_at>?))", (self.agent_id, content_key, now)).fetchone()
+                if exists and action.kind != "browse_reply":
                     return False
             if self._validate_action(db, action, now):
                 return False
@@ -288,14 +344,26 @@ class SQLiteStore:
             return result.rowcount == 1
 
     def _validate_action(self, db, action, now):
+        if action.memory_epoch >= 0 and action.memory_epoch != self._memory_epoch(db):
+            return "memory_sources_invalidated"
         if action.agent_id != self.agent_id:
             return "wrong_agent"
         if action.expires_at <= now:
             return "expired"
         if action.event_id:
-            row = db.execute("SELECT state FROM events WHERE agent_id=? AND event_id=?", (self.agent_id, action.event_id)).fetchone()
+            row = db.execute("SELECT state,payload FROM events WHERE agent_id=? AND event_id=?", (self.agent_id, action.event_id)).fetchone()
             if not row or row[0] == "deleted":
                 return "source_deleted"
+        if action.kind == "private_reply":
+            if not action.event_id:
+                return "private_source_missing"
+            source = Event.from_dict(json.loads(row["payload"]))
+            if (source.kind != "private_message" or source.visibility != "private" or action.visibility != "private" or
+                    source.platform != action.platform or source.account_id != action.account_id or
+                    source.actor_id != action.recipient_id or source.conversation_id != action.conversation_id or
+                    source.reply_to != action.reply_to or source.sequence != action.source_sequence or
+                    action.content is not None or action.mentions):
+                return "private_route_mismatch"
         for person in set(action.mentions) | ({action.subject_person_id} if action.subject_person_id else set()):
             binding = db.execute("SELECT version,purpose FROM bindings WHERE agent_id=? AND person_id=? AND platform=? AND active=1", (self.agent_id, person, action.platform)).fetchone()
             if not binding or binding[0] != action.binding_version or binding[1] != "owner_video_recommendation":
@@ -310,7 +378,7 @@ class SQLiteStore:
         with self.connection() as db:
             return self._validate_action(db, action, now)
 
-    def claim_action(self, now, daily_limit, daily_recommendations, day_start, min_gap, recommendation_gap, allow_proactive=True, manual_only=False):
+    def claim_action(self, now, daily_limit, daily_recommendations, day_start, min_gap, recommendation_gap, allow_proactive=True, manual_only=False, require_review=False):
         with self.transaction() as db:
             # A crashed write may have reached the platform. Never requeue it.
             stale = db.execute("SELECT action_id,payload FROM actions WHERE agent_id=? AND state='sending' AND lease_until<?", (self.agent_id, now)).fetchall()
@@ -329,7 +397,7 @@ class SQLiteStore:
             last = db.execute(f"SELECT MAX(COALESCE(sent_at,created_at)) FROM actions WHERE agent_id=? AND state IN {states}", (self.agent_id,)).fetchone()[0]
             if last is not None and now - last < min_gap:
                 return None
-            rows = db.execute("SELECT payload,kind FROM actions WHERE agent_id=? AND state='queued' ORDER BY CASE kind WHEN 'reply' THEN 0 WHEN 'recommendation' THEN 1 ELSE 2 END,created_at", (self.agent_id,)).fetchall()
+            rows = db.execute("SELECT rowid AS queue_order,payload,kind FROM actions WHERE agent_id=? AND state='queued' ORDER BY CASE kind WHEN 'reply' THEN 0 WHEN 'private_reply' THEN 0 WHEN 'recommendation' THEN 1 ELSE 2 END,created_at", (self.agent_id,)).fetchall()
             for row in rows:
                 action = Action.from_dict(json.loads(row["payload"]))
                 paused = db.execute("SELECT value FROM settings WHERE agent_id=? AND key=?", (self.agent_id, f"platform_paused:{action.platform}")).fetchone()
@@ -337,7 +405,11 @@ class SQLiteStore:
                     continue
                 if manual_only and not action.approved_manually:
                     continue
-                if not allow_proactive and action.kind in {"recommendation", "browse_comment"}:
+                if require_review and not action.approved_manually and action.kind not in {"like", "coin"} and action.review_state != "passed":
+                    continue
+                if action.conversation_id and db.execute("SELECT 1 FROM actions WHERE agent_id=? AND rowid<? AND state IN ('queued','reviewing') AND json_extract(payload,'$.conversation_id')=?", (self.agent_id, row["queue_order"], action.conversation_id)).fetchone():
+                    continue
+                if not allow_proactive and (action.proactive or action.kind in {"recommendation", "browse_comment", "browse_reply"}):
                     continue
                 reason = self._validate_action(db, action, now)
                 if reason:
@@ -363,6 +435,8 @@ class SQLiteStore:
                 return
             db.execute("UPDATE actions SET state=?,receipt=?,sent_at=?,lease_until=0 WHERE agent_id=? AND action_id=?", (receipt.state, dumps(asdict(receipt)), now, self.agent_id, action_id))
             action = Action.from_dict(json.loads(row[0]))
+            if receipt.state == "accepted":
+                self._archive_action(db,action,now)
             if action.task_id:
                 task = db.execute("SELECT * FROM tasks WHERE agent_id=? AND task_id=?", (self.agent_id, action.task_id)).fetchone()
                 if task and task["state"] != "cancelled":
@@ -373,6 +447,43 @@ class SQLiteStore:
                         db.execute("UPDATE tasks SET state='scheduled',version=version+1,attempts=0,due_at=?,expires_at=?,reason='' WHERE agent_id=? AND task_id=?", (now + task["interval_days"] * 86400, now + (task["interval_days"] + 7) * 86400, self.agent_id, action.task_id))
                     else:
                         db.execute("UPDATE tasks SET state=?,reason=? WHERE agent_id=? AND task_id=?", (state, receipt.detail[:500], self.agent_id, action.task_id))
+
+    def claim_review_action(self, now):
+        with self.transaction() as db:
+            # These leases cover model-only work; recovery cannot duplicate a social write.
+            stale = db.execute("SELECT action_id FROM actions WHERE agent_id=? AND state='reviewing' AND lease_until<?", (self.agent_id, now)).fetchall()
+            for row in stale:
+                db.execute("UPDATE actions SET state='draft',lease_until=0,payload=json_set(payload,'$.review_state','unavailable','$.review_reason','审核进程中断，等待人工复核') WHERE agent_id=? AND action_id=?", (self.agent_id, row[0]))
+            rows = db.execute("SELECT payload FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND COALESCE(json_extract(payload,'$.review_state'),'')!='passed' ORDER BY created_at", (self.agent_id,)).fetchall()
+            for row in rows:
+                action = Action.from_dict(json.loads(row[0]))
+                if self._validate_action(db, action, now):
+                    continue
+                paused = db.execute("SELECT value FROM settings WHERE agent_id=? AND key=?", (self.agent_id, f"platform_paused:{action.platform}")).fetchone()
+                if paused and json.loads(paused[0]):
+                    continue
+                db.execute("UPDATE actions SET state='reviewing',lease_until=? WHERE agent_id=? AND action_id=?", (now+900, self.agent_id, action.action_id))
+                return action
+        return None
+
+    def record_action_review(self, action_id, state, reason, now):
+        if state not in {"passed", "rejected", "unavailable"}:
+            raise ValueError("无效模型审核状态")
+        with self.transaction() as db:
+            row = db.execute("SELECT payload FROM actions WHERE agent_id=? AND action_id=? AND state IN ('sending','reviewing')", (self.agent_id, action_id)).fetchone()
+            if not row:
+                return
+            data = json.loads(row[0])
+            data.update(review_state=state, review_reason=reason[:240])
+            if state == "passed":
+                db.execute("UPDATE actions SET payload=?,state=CASE WHEN state='reviewing' THEN 'queued' ELSE state END,lease_until=CASE WHEN state='reviewing' THEN 0 ELSE lease_until END WHERE agent_id=? AND action_id=?", (dumps(data), self.agent_id, action_id))
+            else:
+                # Model refusal and model outages both require a deliberate human
+                # approval. Never turn them into automatic retries or failed sends.
+                db.execute("UPDATE actions SET payload=?,state='draft',sent_at=NULL,lease_until=0,receipt=? WHERE agent_id=? AND action_id=?",
+                           (dumps(data), dumps({"detail": "等待人工审核：" + reason[:240]}), self.agent_id, action_id))
+            db.execute("INSERT INTO audit(agent_id,kind,detail,created_at) VALUES(?,?,?,?)",
+                       (self.agent_id, "model_review", f"{action_id}: {state}；{reason[:240]}", now))
 
     def approve_action(self, action_id, now):
         with self.transaction() as db:
@@ -424,10 +535,7 @@ class SQLiteStore:
         with self.connection() as db:
             row = db.execute("SELECT payload FROM documents WHERE agent_id=? AND content_key=? AND created_at>?", (self.agent_id, ref.key, now - 86400)).fetchone()
         if row:
-            data = json.loads(row[0])
-            data["ref"] = ContentRef(**data["ref"])
-            data["comments"] = tuple(data["comments"])
-            return Document(**data)
+            return Document.from_dict(json.loads(row[0]))
         return None
 
     def has_viewed(self, ref, now):
@@ -450,6 +558,25 @@ class SQLiteStore:
         with self.connection() as db:
             db.execute("DELETE FROM leases WHERE agent_id=? AND name=? AND holder=?", (self.agent_id, name, self.holder))
 
+    def recover_idle_work(self, now):
+        with self.transaction() as db:
+            db.execute("UPDATE events SET state='pending',lease_until=0 WHERE agent_id=? AND state='processing' AND lease_until<?", (self.agent_id, now))
+            db.execute("UPDATE actions SET state='draft',lease_until=0,payload=json_set(payload,'$.review_state','unavailable','$.review_reason','审核进程中断，等待人工复核') WHERE agent_id=? AND state='reviewing' AND lease_until<?", (self.agent_id, now))
+            rows = db.execute("SELECT action_id,payload FROM actions WHERE agent_id=? AND state='sending' AND lease_until<?", (self.agent_id, now)).fetchall()
+            for row in rows:
+                db.execute("UPDATE actions SET state='unknown',lease_until=0,receipt=? WHERE agent_id=? AND action_id=?", (dumps({"state":"unknown","detail":"worker_lost_during_send"}),self.agent_id,row["action_id"]))
+                task_id = json.loads(row["payload"]).get("task_id")
+                if task_id:
+                    db.execute("UPDATE tasks SET state='delivery_unknown' WHERE agent_id=? AND task_id=? AND state!='cancelled'", (self.agent_id,task_id))
+
+    def queue_status(self):
+        with self.connection() as db:
+            events = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM events WHERE agent_id=? GROUP BY state", (self.agent_id,))}
+            actions = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM actions WHERE agent_id=? GROUP BY state", (self.agent_id,))}
+            reviews = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND COALESCE(json_extract(payload,'$.review_state'),'')!='passed'", (self.agent_id,)).fetchone()[0]
+        return {"pending_events": events.get("pending", 0), "processing_events": events.get("processing", 0),
+                "reviewing_actions": actions.get("reviewing", 0), "queued_actions": actions.get("queued", 0), "draft_actions": actions.get("draft", 0), "review_ready_actions": reviews}
+
     def reserve_model_call(self, day, limit):
         with self.transaction() as db:
             row = db.execute("SELECT calls FROM model_daily WHERE agent_id=? AND day=?", (self.agent_id, day)).fetchone()
@@ -466,7 +593,7 @@ class SQLiteStore:
             db.execute("INSERT INTO audit(agent_id,kind,detail,created_at) VALUES(?,?,?,?)", (self.agent_id, kind, detail[:1000], now))
 
     def inspect(self, table, limit=100):
-        allowed = {"bindings", "events", "memories", "tasks", "actions", "views", "audit", "model_usage", "model_daily"}
+        allowed = {"bindings", "events", "memories", "tasks", "actions", "views", "audit", "model_usage", "model_daily", "conversation_records", "memory_products", "memory_jobs", "memory_sources", "memory_daily"}
         if table not in allowed:
             raise ValueError("不支持的数据表")
         with self.connection() as db:

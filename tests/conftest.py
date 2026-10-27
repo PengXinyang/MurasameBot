@@ -37,7 +37,7 @@ class TestPlatform:
         self.searches = []
         self.receipt = Receipt("accepted", "98765", "模拟受理")
 
-    def read(self, ref, *, reply_to="", root=""):
+    def read(self, ref, *, reply_to="", root="", context=None):
         return self.documents.get(ref.key, Document(ref, "摄影入门", "本节介绍曝光、构图与练习方法。", "transcript", "123", "188",
                                                   comments=({"id": "700", "root": "600", "text": "应该怎么练习？"},)))
 

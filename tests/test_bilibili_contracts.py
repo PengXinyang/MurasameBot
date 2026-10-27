@@ -35,10 +35,56 @@ def test_dynamic_notification_uses_actual_business_comment_type():
     assert BilibiliAdapter.notification_event(notification(999), "mention", "999", 1000) is None
 
 
+def test_post_body_mention_is_not_mistaken_for_comment_mention(tmp_path):
+    item = notification(11)
+    item["item"].update(type="dynamic", uri="https://www.bilibili.com/opus/900", source_id=900)
+    event = BilibiliAdapter.notification_event(item, "mention", "999", 1000)
+    assert event.kind == "post_mention" and not event.reply_to
+    def handle(request):
+        return httpx.Response(200, json={"code": 0, "data": {"item": {"id_str": "900",
+            "basic": {"comment_type": 11, "comment_id_str": "42"}, "modules": {"module_author": {"mid": 123}}}}})
+    adapter = BilibiliAdapter(credentials(tmp_path), client=httpx.Client(transport=httpx.MockTransport(handle)))
+    resolved = adapter._resolve_post_mention(event)
+    assert resolved.content == ContentRef("bilibili", "draw", "42") and resolved.share_content.external_id == "900"
+    assert adapter._resolve_post_mention(replace(event, actor_id="different")) is None
+    item["item"]["source_id"] = 700
+    comment = BilibiliAdapter.notification_event(item, "mention", "999", 1000)
+    assert comment.kind == "mention" and comment.reply_to == "700"
+
+
 def test_image_dynamic_does_not_guess_comment_oid_from_dynamic_id():
     item = {"id_str": "900", "type": "DYNAMIC_TYPE_DRAW", "basic": {"comment_id_str": "200", "comment_type": 11}}
     assert BilibiliAdapter.dynamic_reference(item) == ContentRef("bilibili", "draw", "200")
     assert BilibiliAdapter.dynamic_reference({"id_str": "900", "type": "DYNAMIC_TYPE_DRAW"}) is None
+
+
+def test_draw_notification_preserves_dynamic_id_separate_from_comment_id():
+    source = notification(11)
+    source["item"]["uri"] = "https://www.bilibili.com/opus/900"
+    event = BilibiliAdapter.notification_event(source, "mention", "999", 1000)
+    assert event.content == ContentRef("bilibili", "draw", "42")
+    assert event.share_content == ContentRef("bilibili", "post", "900")
+
+
+def test_draw_read_uses_modern_dynamic_endpoint_and_checks_comment_binding(tmp_path):
+    comment_oid = ["42"]
+    paths = []
+    def handle(request):
+        paths.append(request.url.path)
+        if request.url.path.endswith("/detail"):
+            assert request.url.params["id"] == "900"
+            return httpx.Response(200, json={"code": 0, "data": {"item": {
+                "basic": {"comment_type": 11, "comment_id_str": comment_oid[0]},
+                "modules": {"module_author": {"mid": 123}, "module_dynamic": {"desc": {"text": "正文"}}}}}})
+        assert request.url.path == "/x/v2/reply/main" and request.url.params["oid"] == "42"
+        return httpx.Response(200, json={"code": 0, "data": {"replies": []}})
+    adapter = BilibiliAdapter(credentials(tmp_path), client=httpx.Client(transport=httpx.MockTransport(handle)))
+    doc = adapter.read(ContentRef("bilibili", "draw", "42"), context=ContentRef("bilibili", "post", "900"))
+    assert doc.url == "https://www.bilibili.com/opus/900" and doc.text == "正文"
+    assert not any("doc_detail" in path for path in paths)
+    comment_oid[0] = "different-comment-section"
+    with pytest.raises(PlatformError, match="不匹配"):
+        adapter.read(ContentRef("bilibili", "draw", "42"), context=ContentRef("bilibili", "post", "900"))
 
 
 def test_real_mention_mapping_and_thread_parent_are_encoded(tmp_path):

@@ -3,8 +3,21 @@ from dataclasses import replace
 
 from murasamebot.adapters.persistence.sqlite import SQLiteStore
 from murasamebot.application.scheduling import day_start
-from murasamebot.domain.models import Action, ContentRef, Receipt
+from murasamebot.domain.models import Action, ContentRef, Event, Receipt
 from conftest import queue_recommendation
+
+
+def test_legacy_notification_context_is_enriched_without_replaying_or_reviving_deleted_source(factory, now):
+    engine, store, model, platform = factory()
+    event = Event("legacy-draw", "bilibili", "robot", "123", "thread", "mention", "消息", now,
+                  content=ContentRef("bilibili", "draw", "42"))
+    store.enqueue_event(event)
+    enriched = replace(event, share_content=ContentRef("bilibili", "post", "900"))
+    assert not store.enqueue_event(enriched)
+    assert store.event(event.event_id).share_content == enriched.share_content
+    assert store.inspect("events")[0]["state"] == "pending"
+    store.finish_event(event.event_id, "deleted")
+    assert not store.enqueue_event(enriched) and store.event(event.event_id) is None
 
 
 def test_two_workers_cannot_claim_same_action(factory, now):

@@ -30,7 +30,7 @@ class ScenarioPlatform:
         self.searches = []
         self.ref = ContentRef("bilibili", "video", "10001")
 
-    def read(self, ref, *, reply_to="", root=""):
+    def read(self, ref, *, reply_to="", root="", context=None):
         return Document(ref, "摄影入门：曝光与构图", "本节介绍光圈、快门、感光度与构图的联系。", "transcript", "123456", "188", "https://www.bilibili.com/video/demo")
 
     def search(self, query, category_ids, limit):

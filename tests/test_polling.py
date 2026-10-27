@@ -43,3 +43,18 @@ def test_new_owner_binding_gets_its_own_baseline(factory, now):
     store.bind("owner", "bilibili", "222")
     runtime.poll(now + 10)
     assert {row["state"] for row in store.inspect("events")} == {"baseline"}
+
+
+def test_fast_message_polls_do_not_repeat_owner_feed_reads(factory, now):
+    engine, store, model, platform = factory()
+    platform.account_id = "robot"
+    notifications, publications = [], []
+    platform.notifications = lambda stamp: notifications.append(stamp) or []
+    platform.owner_content = lambda uid, stamp: publications.append(stamp) or []
+    config = SimpleNamespace(data={"owner_person_id": "owner", "bilibili": {
+        "poll_seconds": 90, "owner_new_videos": True, "owner_new_dynamics": True}})
+    runtime = Runtime(config, store, platform, model, engine)
+    for delta in (0, 15, 30, 90):
+        runtime.poll(now + delta)
+    assert len(notifications) == 4
+    assert publications == [now, now + 90]

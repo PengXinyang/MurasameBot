@@ -3,7 +3,7 @@ owner_person_id: owner
 database: data/murasame.sqlite3
 character_source: character/settings.yml
 character_profile: character/text_profile.yml
-mode: draft  # draft: save proposed comments; auto: dispatch approved policy-compliant actions
+mode: reviewed  # reviewed: model approves, otherwise human draft; draft: all manual; auto: no model review
 paused: false
 timezone: Asia/Hong_Kong
 text_language: zh
@@ -17,12 +17,46 @@ model:
   timeout_seconds: 60
   daily_call_limit: 150
   max_context_characters: 18000
+  max_output_tokens: null  # omit max_tokens; use the model service's official default
+processing:
+  model_concurrency: 4  # shared by concurrent reply generation, reviews and vision
+memory:
+  enabled: true
+  recent_messages: 20  # messages, not full dialogue turns
+  recall_limit: 8
+  context_characters: 12000  # estimated input budget in characters, not tokens
+  summary_messages: 40
+  batch_messages: 80
+  input_characters: 24000
+  pressure_ratio: 0.75
+  review_time: '23:00'
+  daily_call_limit: 10  # also charged against model.daily_call_limit
+  retry_minutes: 10
+vision:
+  enabled: true
+  base_url: ${MURASAME_VISION_BASE_URL}  # blank: reuse the configured text service
+  name: ${MURASAME_VISION_MODEL_NAME}  # blank: reuse model.name; must support image input
+  api_key: ${MURASAME_VISION_API_KEY}  # blank with the same service: reuse model.api_key
+  max_images: 9
+  max_image_bytes: 8388608
+  max_total_bytes: 25165824
+  cache_minutes: 1440
+  failure_retry_minutes: 10
+  detail: auto
+  allowed_image_hosts: [i0.hdslb.com, i1.hdslb.com, i2.hdslb.com]
 bilibili:
   credentials: .secrets/bilibili.json
   robot_uid: ""  # optional expected UID, checked against the logged-in account
-  poll_seconds: 90
+  poll_seconds: 90  # owner publications; independently throttled
+  reply_poll_seconds: 15  # comment/@ notifications and mutual-only private inbox
   notification_pages: 3
+  inbox_batch_limit: 90  # latest unique messages per inbox poll; overflow is a dashboard warning
   notification_max_age_hours: 24
+  private_messages_enabled: true  # only verified mutual followers; no owner exception
+  private_session_pages: 3
+  private_message_pages: 3
+  private_message_max_age_hours: 24
+  read_video_subtitles: true  # combine available subtitles with title + description; otherwise metadata only
   owner_new_videos: true
   owner_new_dynamics: true
   repost_owner_videos: true
@@ -46,8 +80,21 @@ artwork:
   pixiv_session: ${MURASAME_PIXIV_SESSION}
   x_bearer_token: ${MURASAME_X_BEARER_TOKEN}
   permissions: []  # local supplementary guide: ../docs/新增功能配置.md; attribution alone is not permission
+engagement:
+  video_like: true
+  video_coin: true  # exactly one coin per video; skip if balance < 1 or already coined
+  dynamic_like: true
+expressions:
+  enabled: true
+  max_per_message: 2  # model may choose none; never more than two
+  cache_minutes: 360
+  preferred_keywords: [丛雨]
 browsing:
   enabled: false
+  allow_metadata_video: true
+  comment_videos: true
+  reply_comments: true
+  recommend_owner: true
   weekdays: [0, 1, 2, 3, 4, 5, 6]  # Monday = 0
   windows:
     - start: "19:00"
@@ -67,6 +114,7 @@ limits:
   request_expiry_days: 7
   max_task_attempts: 3
   max_comment_characters: 250
+  max_private_characters: 400
   max_recommendation_characters: 80
   max_event_attempts: 3
 web:

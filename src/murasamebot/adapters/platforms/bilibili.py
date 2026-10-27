@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from hashlib import md5
 from io import BytesIO
 from html import unescape
@@ -14,8 +15,10 @@ import httpx
 from PIL import Image
 
 from murasamebot.adapters.network import client as network_client
+from murasamebot.adapters.platforms.bilibili_private import BilibiliPrivateMixin
+from murasamebot.adapters.platforms.bilibili_emojis import BilibiliEmojiMixin
 
-from murasamebot.domain.models import Action, ContentRef, Document, Event, PlatformError as CorePlatformError, Receipt
+from murasamebot.domain.models import Action, ContentRef, Document, Event, ImageRef, PlatformError as CorePlatformError, Receipt
 
 
 API = "https://api.bilibili.com"
@@ -48,18 +51,27 @@ def numeric(value: object) -> str:
     return text
 
 
-class BilibiliAdapter:
+class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin):
     """Bilibili protocol details stay here. No dependency on an archived SDK."""
 
     def __init__(self, credentials_path: Path, *, expected_uid: str = "", pages: int = 3,
                  max_age_hours: int = 24, client: httpx.Client | None = None,
-                 proxy_url: str = "", image_client: httpx.Client | None = None):
+                 proxy_url: str = "", image_client: httpx.Client | None = None,
+                 private_session_pages: int = 3, private_message_pages: int = 3, private_max_age_hours: int = 24,
+                 read_video_subtitles: bool = True, inbox_batch_limit: int = 90):
         self.credentials_path = credentials_path
         self.expected_uid = str(expected_uid or "")
         self.pages = max(1, min(pages, 20))
         self.max_age = max_age_hours * 3600
         self.proxy_url = proxy_url
         self.image_client = image_client
+        self.private_session_pages = private_session_pages
+        self.private_message_pages = private_message_pages
+        self.private_max_age_hours = private_max_age_hours
+        self.read_video_subtitles = read_video_subtitles
+        self.inbox_batch_limit = inbox_batch_limit
+        self.poll_warnings = []
+
         self.client = client or network_client(proxy_url=proxy_url, headers={
             "User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/",
         }, timeout=httpx.Timeout(25, connect=10))
@@ -68,9 +80,17 @@ class BilibiliAdapter:
         self._wbi_key: tuple[str, float] | None = None
         self._account: dict | None = None
 
+    def warn_inbox(self, source: str, detail: str):
+        self.poll_warnings.append({"source": source, "detail": detail})
+
+    def take_warnings(self):
+        warnings, self.poll_warnings = self.poll_warnings, []
+        return warnings
+
     def _sync_cookies(self):
         for key, value in self.credentials.items():
-            self.client.cookies.set(key, value, domain="api.bilibili.com", path="/")
+            for host in ("api.bilibili.com", "api.vc.bilibili.com"):
+                self.client.cookies.set(key, value, domain=host, path="/")
 
     def _load_credentials(self) -> dict:
         if not self.credentials_path.exists():
@@ -91,7 +111,7 @@ class BilibiliAdapter:
     def _request(self, path: str, *, params=None, data=None, signed=False):
         url = path if path.startswith("https://") else API + path
         host = urlparse(url).hostname or ""
-        if host not in {"api.bilibili.com", "passport.bilibili.com"}:
+        if host not in {"api.bilibili.com", "api.vc.bilibili.com", "passport.bilibili.com"}:
             raise PlatformError("不允许向任意域名发送平台请求")
         if signed:
             params = self._signed(dict(params or {}))
@@ -103,13 +123,18 @@ class BilibiliAdapter:
             if response.status_code != 200:
                 raise PlatformError(f"平台 HTTP {response.status_code}")
             payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("平台响应必须为对象")
         except (httpx.HTTPError, ValueError):
             raise PlatformError("平台连接或响应解析失败") from None
         code = payload.get("code", -1)
         if code != 0:
             pause = code in {-101, -111, -403, -412, -509, -352, -401, 12015}
             raise PlatformError(f"平台接口错误 {code}", code=str(code), pause=pause)
-        return payload.get("data") or {}, response
+        result = payload.get("data") or {}
+        if not isinstance(result, dict):
+            raise PlatformError("平台数据格式无效")
+        return result, response
 
     def account(self) -> dict:
         data, _ = self._request("/x/web-interface/nav")
@@ -120,7 +145,7 @@ class BilibiliAdapter:
             raise PlatformError("实际登录账号与配置的机器人 UID 不一致", code="wrong_account", pause=True)
         if self.credentials.get("DedeUserID") and uid != self.credentials["DedeUserID"]:
             raise PlatformError("登录凭证中的 UID 不一致", code="wrong_account", pause=True)
-        self._account = {"uid": uid, "name": str(data.get("uname", ""))}
+        self._account = {"uid": uid, "name": str(data.get("uname", "")), "money": data.get("money")}
         return self._account
 
     def _signed(self, params):
@@ -160,15 +185,34 @@ class BilibiliAdapter:
         return {86038: "expired", 86090: "scanned", 86101: "waiting"}.get(status, "error")
 
     @staticmethod
+    def notification_context(source: dict) -> ContentRef | None:
+        try:
+            url = urlparse(str(source.get("uri") or ""))
+            valid = url.scheme == "https" and not url.username and url.port in {None, 443}
+        except ValueError:
+            return None
+        if not valid:
+            return None
+        pattern = r"/opus/(\d{1,24})/?" if url.hostname == "www.bilibili.com" else r"/(\d{1,24})/?" if url.hostname == "t.bilibili.com" else ""
+        match = re.fullmatch(pattern, url.path) if pattern else None
+        return ContentRef("bilibili", "post", match[1]) if match else None
+
+    @staticmethod
     def notification_event(item: dict, kind: str, account_id: str, now: float) -> Event | None:
         source, user = item.get("item") or {}, item.get("user") or {}
         rpid = str(source.get("source_id") or "")
         oid = str(source.get("subject_id") or "")
         business = int(source.get("business_id") or 0)
-        if not rpid.isdigit() or not oid.isdigit() or business not in TYPE_KINDS:
-            return None
         actor = str(user.get("mid") or "")
         if not actor.isdigit() or actor == account_id:
+            return None
+        context = BilibiliAdapter.notification_context(source)
+        if (kind == "mention" and context and source.get("type") in {"dynamic", "opus"} and
+                (not rpid.isdigit() or rpid == "0" or rpid == context.external_id)):
+            return Event(f"bilibili:{account_id}:post_mention:{context.external_id}:{actor}", "bilibili", account_id, actor,
+                         f"bilibili:{account_id}:{context.key}", "post_mention", plain(source.get("source_content") or source.get("title")),
+                         float(item.get("at_time") or now), content=context, share_content=context)
+        if not rpid.isdigit() or not oid.isdigit() or business not in TYPE_KINDS:
             return None
         ref = ContentRef("bilibili", TYPE_KINDS[business], oid)
         root = str(source.get("root_id") or rpid)
@@ -176,7 +220,17 @@ class BilibiliAdapter:
                      f"bilibili:{account_id}:{ref.key}:thread:{root}", kind,
                      plain(source.get("source_content", "")),
                      float(item.get("at_time") or item.get("reply_time") or now),
-                     content=ref, reply_to=rpid, thread_root=root, actor_name=plain(user.get("nickname")))
+                     content=ref, reply_to=rpid, thread_root=root, actor_name=plain(user.get("nickname")),
+                     share_content=context)
+
+    def _resolve_post_mention(self, event: Event) -> Event | None:
+        data, _ = self._request("/x/polymer/web-dynamic/v1/detail", params={"id": numeric(event.content.external_id)})
+        item = data.get("item") or {}
+        author = ((item.get("modules") or {}).get("module_author") or {}).get("mid")
+        ref = self.dynamic_reference(item)
+        if not ref or str(author) != event.actor_id:
+            return None
+        return replace(event, content=ref)
 
     def notifications(self, now: float) -> list[Event]:
         uid = (self._account or self.account())["uid"]
@@ -189,6 +243,15 @@ class BilibiliAdapter:
                 for item in items:
                     event = self.notification_event(item, kind, uid, now)
                     if event and event.occurred_at >= now - self.max_age:
+                        if event.kind == "post_mention":
+                            try:
+                                event = self._resolve_post_mention(event)
+                            except PlatformError as exc:
+                                if exc.pause:
+                                    raise
+                                continue
+                            if event is None:
+                                continue
                         events[event.event_id] = event
                 cursor = data.get("cursor") or {}
                 if not items or cursor.get("is_end", True):
@@ -197,8 +260,11 @@ class BilibiliAdapter:
                                "reply_time" if kind == "reply" else "at_time": cursor.get("time", 0)})
             else:
                 # Do not silently pretend an unbounded backlog has been fully consumed.
-                raise PlatformError("通知超过单轮分页上限，请增加 notification_pages 或先处理积压", code="notification_backlog")
-        return sorted(events.values(), key=lambda event: event.occurred_at)
+                self.warn_inbox("notifications", f"{'回复' if kind == 'reply' else '@'}通知超过 {self.pages} 页，本轮保留已读取的消息；较旧消息未覆盖。")
+        latest = sorted(events.values(), key=lambda event: (event.occurred_at, event.event_id), reverse=True)
+        if len(latest) > self.inbox_batch_limit:
+            self.warn_inbox("notifications", f"本轮评论/@通知超过 {self.inbox_batch_limit} 条，仅接收最新 {self.inbox_batch_limit} 条；超出范围不保证补回。")
+        return sorted(latest[:self.inbox_batch_limit], key=lambda event: event.occurred_at)
 
     @staticmethod
     def dynamic_reference(item: dict) -> ContentRef | None:
@@ -249,8 +315,14 @@ class BilibiliAdapter:
             data, _ = self._request("/x/v2/reply/main", params={"oid": numeric(ref.external_id), "type": type_, "mode": 3, "ps": 5})
             rows = data.get("replies") or []
         for row in rows:
-            comments.append({"id": str(row.get("rpid_str") or row.get("rpid", "")),
-                             "root": str(row.get("root_str") or row.get("root") or row.get("rpid", "")),
+            author_id = str((row.get("member") or {}).get("mid") or "")
+            if author_id and author_id == self.account_id:
+                continue
+            identifier = str(row.get("rpid_str") or row.get("rpid", ""))
+            parent = str(row.get("root_str") or row.get("root") or "")
+            comments.append({"id": identifier,
+                             "root": parent if parent not in {"", "0"} else identifier,
+                             "author_id": author_id,
                              "text": str((row.get("content") or {}).get("message", ""))[:1500]})
         return tuple(comments)
 
@@ -277,7 +349,7 @@ class BilibiliAdapter:
                 continue
         return ""
 
-    def read(self, ref: ContentRef, *, reply_to="", root="") -> Document:
+    def read(self, ref: ContentRef, *, reply_to="", root="", context: ContentRef | None = None) -> Document:
         if ref.provider != "bilibili" or ref.kind not in set(COMMENT_TYPES) | {"post"}:
             raise PlatformError("不支持的内容引用")
         oid = numeric(ref.external_id)
@@ -285,21 +357,38 @@ class BilibiliAdapter:
             data, _ = self._request("/x/web-interface/view", params={"aid": oid})
             bvid = str(data.get("bvid", ""))
             transcripts = []
-            for page in (data.get("pages") or [{"cid": data.get("cid")}])[:3]:
+            pages = (data.get("pages") or [{"cid": data.get("cid")}])[:3] if self.read_video_subtitles else []
+            for page in pages:
                 cid = str(page.get("cid") or "")
                 if cid.isdigit():
-                    text = self._subtitle(bvid, cid)
+                    try:
+                        text = self._subtitle(bvid, cid)
+                    except CorePlatformError as exc:
+                        if exc.pause:
+                            raise
+                        # Optional subtitles must not prevent reading known metadata.
+                        text = ""
                     if text:
                         transcripts.append(str(page.get("part") or "") + "\n" + text)
-            body = "\n".join(transcripts)[:20000]
-            level = "transcript" if body else "metadata"
-            body = body or str(data.get("desc") or "")
+            transcript = "\n".join(transcripts)[:16000]
+            level = "transcript" if transcript else "metadata"
+            description = str(data.get("desc") or "")[:3000]
+            body = ("视频简介：\n" + description + "\n取得的字幕（最多前3个分P，可能不完整）：\n" + transcript) if transcript else description
             title, author, category = plain(data.get("title")), str((data.get("owner") or {}).get("mid", "")), str(data.get("tid", ""))
             url = "https://www.bilibili.com/video/" + bvid
         else:
-            if ref.kind in {"dynamic", "post"}:
-                data, _ = self._request("/x/polymer/web-dynamic/v1/detail", params={"id": oid})
+            if ref.kind in {"dynamic", "post", "draw"}:
+                post_id = oid
+                if ref.kind == "draw":
+                    if context is None or context.provider != "bilibili" or context.kind != "post":
+                        raise PlatformError("图文通知缺少原动态引用，不能把评论区 ID 当作动态 ID", code="missing_dynamic_context")
+                    post_id = numeric(context.external_id)
+                data, _ = self._request("/x/polymer/web-dynamic/v1/detail", params={"id": post_id})
                 item = data.get("item") or {}
+                if ref.kind == "draw":
+                    basic = item.get("basic") or {}
+                    if str(basic.get("comment_id_str") or "") != oid or basic.get("comment_type") != COMMENT_TYPES["draw"]:
+                        raise PlatformError("原动态与通知中的图文评论区不匹配", code="content_reference_mismatch")
                 dynamic = (item.get("modules") or {}).get("module_dynamic") or {}
                 opus = (dynamic.get("major") or {}).get("opus") or {}
                 body = str((dynamic.get("desc") or {}).get("text") or (opus.get("summary") or {}).get("text") or "")
@@ -307,16 +396,37 @@ class BilibiliAdapter:
                     archive = (dynamic.get("major") or {}).get("archive") or {}
                     body = str(archive.get("title") or "")
                 author = str(((item.get("modules") or {}).get("module_author") or {}).get("mid", ""))
-            elif ref.kind == "draw":
-                data, _ = self._request("https://api.bilibili.com/x/dynamic/feed/draw/doc_detail", params={"doc_id": oid})
-                body = str((data.get("item") or {}).get("description") or "")
-                author = str((data.get("user") or {}).get("uid", ""))
+                original = item.get("orig") or {}
+                original_dynamic = ((original.get("modules") or {}).get("module_dynamic") or {})
+                original_major = original_dynamic.get("major") or {}
+                original_text = (original_dynamic.get("desc") or {}).get("text") or ((original_major.get("opus") or {}).get("summary") or {}).get("text") or ""
+                if original_text:
+                    body += "\n转发原文：" + str(original_text)
             else:
                 raise PlatformError("专栏通知可识别，正文读取尚不支持", code="unsupported_content")
-            title, category, url = "动态", "", "https://www.bilibili.com/opus/" + oid if ref.kind in {"dynamic", "post"} else ""
+            title, category, url = "动态", "", "https://www.bilibili.com/opus/" + post_id
             level = "text" if body else "metadata"
         comments = self._comments(ref, reply_to, root) if ref.kind != "post" else ()
-        return Document(ref, title, body[:20000], level, author, category, url, comments)
+        images = self.dynamic_images(item) if ref.kind in {"dynamic", "post", "draw"} else ()
+        parent = ContentRef("bilibili", "post", post_id) if ref.kind in {"dynamic", "post", "draw"} else None
+        return Document(ref, title, body[:20000], level, author, category, url, comments, images, parent=parent)
+
+    @staticmethod
+    def dynamic_images(item: dict) -> tuple[ImageRef, ...]:
+        urls = []
+        for post in (item, item.get("orig") or {}):
+            dynamic = ((post.get("modules") or {}).get("module_dynamic") or {})
+            major = dynamic.get("major") or {}
+            rows = ((major.get("draw") or {}).get("items") or []) + ((major.get("opus") or {}).get("pics") or [])
+            for row in rows:
+                url = str(row.get("src") or row.get("url") or "")
+                if url.startswith("//"):
+                    url = "https:" + url
+                elif url.startswith("http://"):
+                    url = "https://" + url[7:]
+                if url and url not in urls:
+                    urls.append(url)
+        return tuple(ImageRef(url, index + 1) for index, url in enumerate(urls))
 
     def discover(self, category_ids: Sequence[str], limit: int) -> list[ContentRef]:
         refs = {}
@@ -356,6 +466,13 @@ class BilibiliAdapter:
         account = self.account()  # Revalidate before every write.
         if action.account_id != account["uid"]:
             raise PlatformError("排队动作属于不同的机器人账号", code="wrong_account", pause=True)
+        emoji_error = self.check_emojis(action)
+        if emoji_error:
+            return emoji_error
+        if action.kind in {"like", "coin"}:
+            return self._send_reaction(action, before_write=before_write)
+        if action.kind == "private_reply":
+            return self._send_private(action, before_write=before_write)
         if action.kind in {"owner_repost", "artwork_share"}:
             return self._send_dynamic(action, before_write=before_write)
         if action.content is None or action.content.kind not in COMMENT_TYPES:
@@ -390,6 +507,62 @@ class BilibiliAdapter:
         resolved = {str(member.get("mid")) for member in ((reply.get("content") or {}).get("members") or [])}
         mention_resolved = all(str(mid) in resolved for mid in names.values())
         return Receipt("accepted", rpid, "平台已受理，公开可见性尚未独立验证", mention_resolved)
+
+    def _send_reaction(self, action: Action, *, before_write=None) -> Receipt:
+        ref = action.content
+        if not ref or ref.provider != "bilibili" or action.mentions or action.recipient_id:
+            raise PlatformError("互动缺少有效内容引用，或包含不允许的接收对象")
+        if action.kind == "coin" and (ref.kind != "video" or type(action.amount) is not int or action.amount != 1):
+            raise PlatformError("只允许给视频投 1 枚硬币")
+        if action.kind == "like" and action.amount != 0:
+            raise PlatformError("点赞不允许携带投币数量")
+        if ref.kind == "video":
+            fields = {"aid": numeric(ref.external_id), "csrf": self.credentials["bili_jct"]}
+            if action.kind == "coin":
+                state, _ = self._request("/x/web-interface/archive/coins", params={"aid": fields["aid"]})
+                count = state.get("multiply")
+                if type(count) is not int or count < 0:
+                    raise PlatformError("无法确认该视频已有投币数，未投币")
+                if count >= 1:
+                    return Receipt("accepted", f"coin:{fields['aid']}", "视频已经投过币，未重复投币")
+                balance = self.account().get("money")
+                if type(balance) not in {int, float} or not 0 <= balance < float("inf"):
+                    raise PlatformError("无法确认硬币余额，未投币")
+                if balance < 1:
+                    return Receipt("failed", detail="硬币余额不足 1 枚，跳过投币")
+                fields.update(multiply=1, select_like=0)
+                path = "/x/web-interface/coin/add"
+            else:
+                # The combined relation endpoint returns an object rather than a scalar.
+                state, _ = self._request("/x/web-interface/archive/relation", params={"aid": fields["aid"]})
+                if state.get("like") is True or state.get("like") == 1:
+                    return Receipt("accepted", f"like:{fields['aid']}", "视频已经点赞，未重复写入")
+                fields["like"] = 1
+                path = "/x/web-interface/archive/like"
+            body = None
+            target_id = fields["aid"]
+        elif action.kind == "like" and ref.kind in {"dynamic", "draw", "post"}:
+            parent = action.context or (ref if ref.kind == "post" else None)
+            if parent is None or parent.provider != "bilibili" or parent.kind != "post":
+                raise PlatformError("动态点赞需要实际动态 ID，不能使用图文评论区 ID")
+            target_id = numeric(parent.external_id)
+            result, _ = self._request("/x/polymer/web-dynamic/v1/detail", params={"id": target_id})
+            item = result.get("item") or {}
+            if str(item.get("id_str") or "") != target_id:
+                raise PlatformError("动态点赞目标与读取的动态不匹配")
+            if ref.kind != "post" and self.dynamic_reference(item) != ref:
+                raise PlatformError("动态点赞目标与原评论区不匹配")
+            like = ((item.get("modules") or {}).get("module_stat") or {}).get("like") or {}
+            if like.get("status") is True:
+                return Receipt("accepted", f"like:{target_id}", "动态已经点赞，未重复写入")
+            path, fields = "/x/dynamic/feed/dyn/thumb", None
+            body = {"dyn_id_str": target_id, "up": 1}
+        else:
+            raise PlatformError("不支持此类型的点赞或投币")
+        if before_write is not None and not before_write():
+            return Receipt("failed", detail="互动前最终检查未通过，未发送")
+        _, receipt = self._write_json(path, data=fields, json_body=body)
+        return receipt or Receipt("accepted", f"{action.kind}:{target_id}", "平台已受理点赞或单枚投币")
 
     def _image(self, artwork: dict) -> tuple[bytes, str]:
         url = urlparse(str(artwork.get("image_url", "")))
@@ -436,7 +609,7 @@ class BilibiliAdapter:
             return {}, Receipt("unknown", detail="写请求缺少平台状态码，禁止自动重发")
         if payload.get("code") != 0:
             code = payload.get("code")
-            raise PlatformError(f"动态操作未受理，接口错误 {code}", code=str(code), pause=code in {-101, -111, -403, -412, -509, -352, -401, 12015})
+            raise PlatformError(f"平台操作未受理，接口错误 {code}", code=str(code), pause=code in {-101, -111, -403, -412, -509, -352, -401, 12015})
         return payload.get("data") or {}, None
 
     def _send_dynamic(self, action: Action, *, before_write=None) -> Receipt:
@@ -445,6 +618,15 @@ class BilibiliAdapter:
         request = {"content": {"contents": [{"raw_text": action.text, "type": 1, "biz_id": ""}]},
                    "scene": 1, "meta": {"app_meta": {"from": "create.dynamic.web", "mobi_app": "web"}},
                    "upload_id": f"{action.account_id}_{int(action.created_at)}_{int(md5(action.action_id.encode()).hexdigest()[:8], 16) % 10000:04d}"}
+        if action.emojis:
+            contents = []
+            # Render verified native emoji as rich-text nodes; never upload sticker files.
+            tokens = {emoji.token for emoji in action.emojis if emoji.kind == "native"}
+            pattern = "(" + "|".join(re.escape(token) for token in tokens) + ")" if tokens else ""
+            for part in re.split(pattern, action.text) if pattern else [action.text]:
+                if part:
+                    contents.append({"raw_text": part, "type": 9 if part in tokens else 1, "biz_id": ""})
+            request["content"]["contents"] = contents
         body = {"dyn_req": request}
         if action.kind == "owner_repost":
             if not action.content or action.content.provider != "bilibili" or action.content.kind != "post" or not action.source_author_id:
