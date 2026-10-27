@@ -10,6 +10,7 @@ class Behaviour:
     timezone: str = "Asia/Hong_Kong"
     draft: bool = True
     model_review: bool = False
+    review_strategy: str = "inline"
     text_language: str = "zh"
     categories: tuple[str, ...] = ()
     windows: tuple[tuple[str, str], ...] = (("19:00", "21:00"),)

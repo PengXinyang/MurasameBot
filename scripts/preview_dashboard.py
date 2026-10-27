@@ -50,7 +50,7 @@ def main():
                                        "主人辛苦啦，先歇一会儿，吾辈陪你慢慢聊。", stamp, stamp + 3600,
                                        kind="private_reply", evidence_level="conversation", visibility="private", recipient_id="424242", source_sequence=1,
                                        conversation_id=preview_event.conversation_id, event_id=preview_event.event_id, reply_to="100",
-                                       review_state="rejected", review_reason="演示：模型未通过，请人工复核。"), draft=True, now=stamp)
+                                       review_state="rejected", review_method="inline",review_reason="演示：生成时判断需人工确认。"), draft=True, now=stamp)
     output = ROOT.parent / "docs" / "dashboard-preview.png"
     output.parent.mkdir(exist_ok=True)
     browser = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")

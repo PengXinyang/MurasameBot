@@ -17,6 +17,7 @@ from murasamebot.application.artwork import ArtDiscovery, ArtSettings
 from murasamebot.application.vision import VisionService, VisionSettings
 from murasamebot.application.expressions import ExpressionService, ExpressionSettings
 from murasamebot.application.memory import MemoryService, MemorySettings
+from murasamebot.application.review import review_satisfied
 from murasamebot.bootstrap.config import Config
 from murasamebot.domain.models import Action, PlatformError, stable_id
 
@@ -147,7 +148,8 @@ class Runtime:
             if self.artwork:
                 self.artwork.run(time.time(), agent_id=self.engine.settings.agent_id, platform="bilibili",
                                  account_id=self.platform.account_id, timezone=self.engine.settings.timezone,
-                                 draft=self.engine.settings.draft, ttl_minutes=self.engine.settings.action_ttl_minutes)
+                                 draft=self.engine.settings.draft, ttl_minutes=self.engine.settings.action_ttl_minutes,
+                                 review_strategy=self.engine.settings.review_strategy if self.engine.settings.model_review else "none")
             self.engine.dispatch_one()
             self.engine.memory_service.maintain()
             self.store.set_setting("last_tick", time.time())
@@ -227,15 +229,22 @@ def build(config: Config, *, concurrency=None) -> Runtime:
     vision = VisionService(vision_settings, reader, vision_model, store, model_name=v.get("name") or m["name"])
     e = config.data.get("expressions", {})
     expressions = ExpressionService(ExpressionSettings(enabled=e.get("enabled", True), max_per_message=e.get("max_per_message", 2),
-                    cache_minutes=e.get("cache_minutes", 360), preferred_keywords=tuple(e.get("preferred_keywords", ["丛雨"]))), {"bilibili": platform}, store)
+                    cache_minutes=e.get("cache_minutes", 360), preferred_keywords=tuple(e.get("preferred_keywords", ["千恋万花", "丛雨"])),
+                    kaomoji_enabled=e.get("kaomoji_enabled",True)), {"bilibili": platform}, store)
     def action_policy(action: Action, now: float) -> str:
         current = Config(config.path)
+        if (current.data["mode"]=="reviewed" and current.data["review"]["strategy"]!=config.data["review"]["strategy"]
+                and not action.approved_manually and action.kind not in {"like","coin"}
+                and not review_satisfied(action,current.data["review"]["strategy"])):
+            return "审核策略已经变化，需要按当前策略重新审核"
         if action.kind in {"browse_comment", "browse_reply", "recommendation"}:
             key = {"browse_comment": "comment_videos", "browse_reply": "reply_comments", "recommendation": "recommend_owner"}[action.kind]
             if not current.data["browsing"].get(key, True):
                 return "对应主动评论、接话或推荐功能已关闭"
         if action.emojis and (not current.data.get("expressions", {}).get("enabled", True) or len(action.emojis) > current.data.get("expressions", {}).get("max_per_message", 2)):
             return "表情设置已变化，请重新生成或取消此草稿"
+        if any(e.kind=="kaomoji" for e in action.emojis) and not current.data.get("expressions",{}).get("kaomoji_enabled",True):
+            return "颜文字已关闭，请重新生成或取消此草稿"
         if action.kind in {"like", "coin"}:
             key = "video_coin" if action.kind == "coin" else "video_like" if action.content and action.content.kind == "video" else "dynamic_like"
             if not current.data.get("engagement", {}).get(key, False):
@@ -294,5 +303,6 @@ def readiness(runtime: Runtime) -> dict:
         "model_concurrency": runtime.config.data.get("processing", {}).get("model_concurrency", 4),
         "inbox_batch_limit": runtime.config.data["bilibili"].get("inbox_batch_limit", 90),
         "warnings": [w for warnings in runtime.store.get_setting("inbox_warnings", {}).values() for w in warnings],
-        "queues": runtime.store.queue_status(),
+        "review_strategy": runtime.config.data["review"]["strategy"],
+        "queues": runtime.store.queue_status(review_strategy=runtime.config.data["review"]["strategy"]),
     }

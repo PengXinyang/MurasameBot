@@ -21,6 +21,12 @@ def test_dashboard_requires_token_and_rejects_foreign_origin(tmp_path):
             headers = {"Authorization": "Bearer local-token"}
             response = client.get("/api/config", headers=headers)
             assert response.status_code == 200 and response.json()["bindings"][0]["external_id"] == "424242"
+            assert response.json()["review"]["strategy"]=="inline"
+            assert client.post("/api/config",json={"review":{"strategy":"independent"}},headers=headers).status_code==200
+            assert client.get("/api/status",headers=headers).json()["review_strategy"]=="independent"
+            assert client.post("/api/config",json={"review":{"strategy":"inline"}},headers=headers).status_code==200
+            assert client.post("/api/config",json={"review":{"strategy":"unknown"}},headers=headers).status_code==400
+            assert client.post("/api/config",json={"review":{"strategy":[]}},headers=headers).status_code==400
             paths = ["/api/status", "/api/data/tasks", "/api/data/actions", "/api/data/memories", "/api/data/audit"] * 3
             with ThreadPoolExecutor(max_workers=5) as pool:
                 codes = list(pool.map(lambda p: client.get(p, headers=headers).status_code, paths))
@@ -53,12 +59,14 @@ def test_dashboard_requires_token_and_rejects_foreign_origin(tmp_path):
             assert status["warnings"][0]["detail"] == "超过3页，保留90条"
             assert status["queues"]["pending_events"] == 0
             assert client.post("/api/config",json={"processing":{"model_concurrency":0}},headers=headers).status_code == 400
-            assert client.post("/api/config",json={"expressions":{"enabled":True,"max_per_message":1,"preferred_keywords":["丛雨"]},
+            assert client.post("/api/config",json={"expressions":{"enabled":True,"kaomoji_enabled":False,"max_per_message":1,"preferred_keywords":["千恋万花","丛雨"]},
                 "browsing":{"comment_videos":False,"reply_comments":True,"recommend_owner":False}},headers=headers).status_code == 200
             current=client.get("/api/config",headers=headers).json()
             assert current["expressions"]["max_per_message"] == 1 and current["browsing"]["reply_comments"]
+            assert not current["expressions"]["kaomoji_enabled"] and current["expressions"]["preferred_keywords"][0]=="千恋万花"
             assert not current["browsing"]["comment_videos"] and not current["browsing"]["recommend_owner"]
             assert client.post("/api/config",json={"expressions":{"max_per_message":3}},headers=headers).status_code == 400
+            assert client.post("/api/config",json={"expressions":{"kaomoji_enabled":"true"}},headers=headers).status_code == 400
             assert client.post("/api/config", json={"engagement": {"coin_amount": 2}}, headers=headers).status_code == 400
             assert client.post("/api/config", json={"bilibili": {"private_mutual_only": False}}, headers=headers).status_code == 400
             assert client.post("/api/config", json={"artwork": {"permissions": []}}, headers=headers).status_code == 400

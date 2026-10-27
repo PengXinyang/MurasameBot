@@ -1,7 +1,7 @@
 import re
 import time
 
-from murasamebot.application.expressions import UNICODE_EMOJIS
+from murasamebot.application.expressions import KAOMOJIS, UNICODE_EMOJIS
 from murasamebot.domain.models import Emoji, PlatformError, Receipt
 
 
@@ -37,7 +37,11 @@ class BilibiliEmojiMixin:
         if len(action.emojis) > 2:
             return Receipt("failed", detail="每条消息最多使用 2 个表情")
         channel = "private" if action.visibility == "private" else "dynamic" if action.kind in {"owner_repost", "artwork_share"} else "public"
-        allowed = {e.key: e for e in self.emoji_options(action.account_id, channel)}
+        allowed = {e.key:e for e in KAOMOJIS}
+        if any(e.kind!="kaomoji" for e in action.emojis):
+            allowed.update({e.key:e for e in self.emoji_options(action.account_id, channel)})
+        if sum(e.kind=="kaomoji" for e in action.emojis)>1:
+            return Receipt("failed",detail="每条消息最多搭配 1 个颜文字")
         if any(allowed.get(e.key) != e or action.text.count(e.token) != 1 for e in action.emojis):
             return Receipt("failed", detail="表情不可用、权限已变化或正文与已审核表情不一致")
         return None

@@ -144,7 +144,7 @@ def handler_for(config_path: Path, token: str):
                         from murasamebot.domain.models import stable_id
                         key = f"emoji_catalog:bilibili:{uid}:public:{stable_id(runtime.engine.expressions.settings.preferred_keywords)}"
                         store.set_setting(key, {"items": [asdict(e) for e in options], "expires_at": time.time()+config.data.get("expressions",{}).get("cache_minutes",360)*60})
-                        self.response(200, {"ok": True, "count": len(options), "preferred": [e.token for e in options if any(k in e.token for k in config.data.get("expressions",{}).get("preferred_keywords",["丛雨"]))]})
+                        self.response(200, {"ok": True, "count": len(options), "preferred": [e.token for e in options if any(k in e.token for k in config.data.get("expressions",{}).get("preferred_keywords",["千恋万花","丛雨"]))]})
                         return
                     finally:
                         runtime.close()

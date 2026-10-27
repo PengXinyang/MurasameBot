@@ -378,7 +378,7 @@ class SQLiteStore(SQLiteMemory):
         with self.connection() as db:
             return self._validate_action(db, action, now)
 
-    def claim_action(self, now, daily_limit, daily_recommendations, day_start, min_gap, recommendation_gap, allow_proactive=True, manual_only=False, require_review=False):
+    def claim_action(self, now, daily_limit, daily_recommendations, day_start, min_gap, recommendation_gap, allow_proactive=True, manual_only=False, require_review=False, required_review_method=""):
         with self.transaction() as db:
             # A crashed write may have reached the platform. Never requeue it.
             stale = db.execute("SELECT action_id,payload FROM actions WHERE agent_id=? AND state='sending' AND lease_until<?", (self.agent_id, now)).fetchall()
@@ -405,7 +405,7 @@ class SQLiteStore(SQLiteMemory):
                     continue
                 if manual_only and not action.approved_manually:
                     continue
-                if require_review and not action.approved_manually and action.kind not in {"like", "coin"} and action.review_state != "passed":
+                if require_review and not action.approved_manually and action.kind not in {"like", "coin"} and (action.review_state != "passed" or required_review_method=="independent" and action.review_method=="inline"):
                     continue
                 if action.conversation_id and db.execute("SELECT 1 FROM actions WHERE agent_id=? AND rowid<? AND state IN ('queued','reviewing') AND json_extract(payload,'$.conversation_id')=?", (self.agent_id, row["queue_order"], action.conversation_id)).fetchone():
                     continue
@@ -448,13 +448,13 @@ class SQLiteStore(SQLiteMemory):
                     else:
                         db.execute("UPDATE tasks SET state=?,reason=? WHERE agent_id=? AND task_id=?", (state, receipt.detail[:500], self.agent_id, action.task_id))
 
-    def claim_review_action(self, now):
+    def claim_review_action(self, now, *, strategy="independent"):
         with self.transaction() as db:
             # These leases cover model-only work; recovery cannot duplicate a social write.
             stale = db.execute("SELECT action_id FROM actions WHERE agent_id=? AND state='reviewing' AND lease_until<?", (self.agent_id, now)).fetchall()
             for row in stale:
                 db.execute("UPDATE actions SET state='draft',lease_until=0,payload=json_set(payload,'$.review_state','unavailable','$.review_reason','审核进程中断，等待人工复核') WHERE agent_id=? AND action_id=?", (self.agent_id, row[0]))
-            rows = db.execute("SELECT payload FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND COALESCE(json_extract(payload,'$.review_state'),'')!='passed' ORDER BY created_at", (self.agent_id,)).fetchall()
+            rows = db.execute("SELECT payload FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND (COALESCE(json_extract(payload,'$.review_state'),'')!='passed' OR (?='independent' AND json_extract(payload,'$.review_method')='inline')) ORDER BY created_at", (self.agent_id,strategy)).fetchall()
             for row in rows:
                 action = Action.from_dict(json.loads(row[0]))
                 if self._validate_action(db, action, now):
@@ -466,7 +466,7 @@ class SQLiteStore(SQLiteMemory):
                 return action
         return None
 
-    def record_action_review(self, action_id, state, reason, now):
+    def record_action_review(self, action_id, state, reason, now, *, method="independent"):
         if state not in {"passed", "rejected", "unavailable"}:
             raise ValueError("无效模型审核状态")
         with self.transaction() as db:
@@ -474,7 +474,7 @@ class SQLiteStore(SQLiteMemory):
             if not row:
                 return
             data = json.loads(row[0])
-            data.update(review_state=state, review_reason=reason[:240])
+            data.update(review_state=state, review_reason=reason[:240],review_method=method)
             if state == "passed":
                 db.execute("UPDATE actions SET payload=?,state=CASE WHEN state='reviewing' THEN 'queued' ELSE state END,lease_until=CASE WHEN state='reviewing' THEN 0 ELSE lease_until END WHERE agent_id=? AND action_id=?", (dumps(data), self.agent_id, action_id))
             else:
@@ -569,11 +569,11 @@ class SQLiteStore(SQLiteMemory):
                 if task_id:
                     db.execute("UPDATE tasks SET state='delivery_unknown' WHERE agent_id=? AND task_id=? AND state!='cancelled'", (self.agent_id,task_id))
 
-    def queue_status(self):
+    def queue_status(self, *, review_strategy="independent"):
         with self.connection() as db:
             events = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM events WHERE agent_id=? GROUP BY state", (self.agent_id,))}
             actions = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM actions WHERE agent_id=? GROUP BY state", (self.agent_id,))}
-            reviews = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND COALESCE(json_extract(payload,'$.review_state'),'')!='passed'", (self.agent_id,)).fetchone()[0]
+            reviews = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND (COALESCE(json_extract(payload,'$.review_state'),'')!='passed' OR (?='independent' AND json_extract(payload,'$.review_method')='inline'))", (self.agent_id,review_strategy)).fetchone()[0]
         return {"pending_events": events.get("pending", 0), "processing_events": events.get("processing", 0),
                 "reviewing_actions": actions.get("reviewing", 0), "queued_actions": actions.get("queued", 0), "draft_actions": actions.get("draft", 0), "review_ready_actions": reviews}
 

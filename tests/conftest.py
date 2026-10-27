@@ -66,7 +66,10 @@ def factory(tmp_path):
         store = SQLiteStore(tmp_path / "state.sqlite3", overrides.pop("agent_id", "test-agent"))
         store.bind("owner", "wechat", "wx-owner")
         store.bind("owner", "bilibili", "424242")
+        # Existing review tests exercise the retained independent strategy.
+        # New inline tests opt in explicitly; Config's product default is inline.
         settings = replace(Behaviour(agent_id=store.agent_id, account_id="robot", draft=False, browsing_enabled=True,
+                                     review_strategy="independent",
                                      categories=("188",), min_send_gap_seconds=1, recommendation_gap_minutes=1), **overrides)
         model, platform = TestModel(), TestPlatform()
         persona = Persona("丛雨", "你是丛雨。", "自称吾辈，中文简短。", "对已验证主人称主人。", (), "v1")

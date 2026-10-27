@@ -39,7 +39,8 @@ class WorkerCoordinator:
                 if runtime.artwork:
                     runtime.artwork.run(time.time(), agent_id=runtime.engine.settings.agent_id, platform="bilibili",
                                         account_id=runtime.platform.account_id, timezone=config.data["timezone"],
-                                        draft=runtime.engine.settings.draft, ttl_minutes=runtime.engine.settings.action_ttl_minutes)
+                                        draft=runtime.engine.settings.draft, ttl_minutes=runtime.engine.settings.action_ttl_minutes,
+                                        review_strategy=runtime.engine.settings.review_strategy if runtime.engine.settings.model_review else "none")
             finally:
                 runtime.store.release_lease("background_decision")
             return False
@@ -65,7 +66,7 @@ class WorkerCoordinator:
         self.messages = remaining
         store = prepare_store(config)
         store.recover_idle_work(time.time())
-        state = store.queue_status()
+        state = store.queue_status(review_strategy=config.data.get("review",{}).get("strategy","inline"))
         if state["pending_events"] or (config.data["mode"] == "reviewed" and state["review_ready_actions"]):
             for _ in range(max(0, limit - len(self.messages))):
                 self.messages.append(self.pool.submit(self.job, "message"))

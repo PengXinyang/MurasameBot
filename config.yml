@@ -4,6 +4,8 @@ database: data/murasame.sqlite3
 character_source: character/settings.yml
 character_profile: character/text_profile.yml
 mode: reviewed  # reviewed: model approves, otherwise human draft; draft: all manual; auto: no model review
+review:
+  strategy: inline  # inline: verdict during generation; independent: a separate review call
 paused: false
 timezone: Asia/Hong_Kong
 text_language: zh
@@ -86,9 +88,10 @@ engagement:
   dynamic_like: true
 expressions:
   enabled: true
+  kaomoji_enabled: true  # optional text face; at most one, shares the total below
   max_per_message: 2  # model may choose none; never more than two
   cache_minutes: 360
-  preferred_keywords: [丛雨]
+  preferred_keywords: [千恋万花, 丛雨]
 browsing:
   enabled: false
   allow_metadata_video: true

@@ -6,6 +6,24 @@ from murasamebot.adapters.models.chat_completions import ChatCompletionsModel
 from murasamebot.domain.models import ModelError
 
 
+def test_full_expression_catalog_keeps_kaomoji_after_native_emotes(factory):
+    from murasamebot.application.expressions import KAOMOJIS
+    _,store,_,_=factory()
+    options=[{"key":f"bilibili:{i}","token":f"[千恋万花_{i}]","kind":"native"} for i in range(24)]
+    options.extend({"key":e.key,"token":e.token,"kind":e.kind} for e in KAOMOJIS)
+    def handle(request):
+        payload=json.loads(json.loads(request.content)["messages"][1]["content"])
+        assert len(payload["emoji_options"])==32
+        assert payload["emoji_options"][-1]["key"]==KAOMOJIS[-1].key
+        return httpx.Response(200,json={"choices":[{"message":{"content":'{"decision":"reply","text":"吾辈明白啦。"}'}}]})
+    gateway=ChatCompletionsModel(base_url="https://model.invalid",name="fake",api_key="",store=store,
+        timezone="Asia/Hong_Kong",daily_limit=1,client=httpx.Client(transport=httpx.MockTransport(handle)))
+    try:
+        gateway.decide("reply",{"emoji_options":options})
+    finally:
+        gateway.close()
+
+
 def test_compatible_gateway_parses_json_and_records_usage(factory):
     engine, store, model, platform = factory()
     def handle(request):

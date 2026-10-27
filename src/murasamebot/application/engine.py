@@ -12,6 +12,7 @@ from murasamebot.application.settings import Behaviour
 from murasamebot.application.vision import VisionService
 from murasamebot.application.expressions import ExpressionService
 from murasamebot.application.memory import MemoryService
+from murasamebot.application.review import inline_review, review_satisfied
 from murasamebot.domain.models import Action, ContentRef, Document, Event, ModelError, Persona, PlatformError, PolicyError, Receipt, stable_id
 from murasamebot.ports import ActionSink, ContentProvider, ModelGateway, PrivateMessageAccess, StateStore
 
@@ -53,7 +54,7 @@ class SocialEngine:
 
     def message_decision(self, operation, payload, platform, account_id, channel, now):
         options = self.expressions.options(platform, account_id, channel, now) if self.expressions else ()
-        payload = {**payload, "emoji_options": [{"key": e.key, "label": e.label, "token": e.token} for e in options],
+        payload = {**payload, "emoji_options": [{"key": e.key, "label": e.label, "token": e.token, "kind":e.kind} for e in options],
                    "max_emojis": self.expressions.settings.max_per_message if self.expressions else 0}
         result = self.model.decide(operation, payload)
         epoch = payload.get("memory_epoch",-1)
@@ -65,6 +66,13 @@ class SocialEngine:
         text, emojis = self.expressions.compose(result, options, limit) if self.expressions else (result.get("text"), ())
         text = checked_text(text, limit)
         return text + "".join(e.token for e in emojis), emojis
+
+    def enqueue_generated(self, action, result, now):
+        draft = self.settings.draft
+        if self.settings.model_review and self.settings.review_strategy=="inline":
+            action,needs_human = inline_review(action,result)
+            draft = draft or needs_human
+        return self.store.enqueue_action(action,draft=draft,now=now)
 
     def paused(self, platform: str = "") -> bool:
         return bool(self.store.get_setting("paused", False) or (platform and self.store.get_setting(f"platform_paused:{platform}", False)))
@@ -271,7 +279,7 @@ class SocialEngine:
                         subject_person_id=person if owner else "", binding_version=binding["version"] if binding else 0,
                         decision_reason="互关私信：结合当前消息与同会话上下文自然接话", emojis=emojis,
                         memory_epoch=result["_memory_epoch"])
-        self.store.enqueue_action(action, draft=self.settings.draft, now=now)
+        self.enqueue_generated(action,result,now)
 
     def _reply(self, event: Event, person: str | None, now: float) -> None:
         owner_content = event.kind == "owner_content"
@@ -317,7 +325,7 @@ class SocialEngine:
             decision_reason=str(result.get("reason", ""))[:200], dedup_key=event.event_id, emojis=emojis,
             memory_epoch=result["_memory_epoch"],
         )
-        self.store.enqueue_action(action, draft=self.settings.draft, now=now)
+        self.enqueue_generated(action,result,now)
 
     def _owner_repost(self, event: Event, now: float) -> None:
         binding = self.store.binding(self.settings.owner_person_id, event.platform)
@@ -341,7 +349,7 @@ class SocialEngine:
                         binding_version=binding["version"], evidence_level=document.evidence_level,
                         source_author_id=event.actor_id, source_kind="video" if event.share_content and event.share_content.kind == "video" else "dynamic",
                         dedup_key=f"repost:{event.content.key}", decision_reason="转发已验证主人的新内容", emojis=emojis)
-        self.store.enqueue_action(action, draft=self.settings.draft, now=now)
+        self.enqueue_generated(action,result,now)
 
     def _queue_reactions(self, document: Document, now: float, interested: bool, *, event: Event | None = None) -> None:
         if not interested or not self.can_evaluate(document):
@@ -506,7 +514,7 @@ class SocialEngine:
             evidence_level=document.evidence_level, decision_reason=reason, dedup_key=f"proactive:{document.ref.key}",
             emojis=emojis, proactive=True,
         )
-        return self.store.enqueue_action(action, draft=self.settings.draft, now=now)
+        return self.enqueue_generated(action,result,now)
 
     def _queue_browse_reply(self, document, result, options, now):
         target = next((c for c in document.comments if c.get("id") == str(result.get("reply_to", "")) and c.get("author_id") != self.settings.account_id), None)
@@ -520,16 +528,19 @@ class SocialEngine:
                         evidence_level=document.evidence_level, emojis=emojis, proactive=True,
                         conversation_id=f"{document.ref.provider}:{self.settings.account_id}:{document.ref.key}:thread:{root}",
                         decision_reason="主动回应已读取的评论", dedup_key=f"browse_reply:{document.ref.key}:{target['id']}")
-        return self.store.enqueue_action(action, draft=self.settings.draft, now=now)
+        return self.enqueue_generated(action,result,now)
 
     def review_one(self, now: float | None = None) -> bool:
         now = time.time() if now is None else now
         if not self.settings.model_review or self.settings.draft or self.paused():
             return False
-        action = self.store.claim_review_action(now)
+        action = self.store.claim_review_action(now,strategy=self.settings.review_strategy)
         if action is None:
             return False
-        self._review_action(action, now)
+        if self.settings.review_strategy=="inline":
+            self.store.record_action_review(action.action_id,"unavailable","旧队列缺少同次判断，请人工审核或重新生成",now,method="inline")
+        else:
+            self._review_action(action, now)
         return True
 
     def dispatch_one(self, now: float | None = None, *, pre_reviewed_only: bool = False) -> bool:
@@ -541,7 +552,8 @@ class SocialEngine:
                                          day_start(now, self.settings.timezone), self.settings.min_send_gap_seconds,
                                          self.settings.recommendation_gap_minutes * 60,
                                          self.settings.browsing_enabled and next_window(now, self.settings.timezone, self.settings.windows, self.settings.weekdays) == now,
-                                         manual_only=self.settings.draft, require_review=self.settings.model_review and pre_reviewed_only)
+                                         manual_only=self.settings.draft, require_review=self.settings.model_review and pre_reviewed_only,
+                                         required_review_method=self.settings.review_strategy if self.settings.model_review and pre_reviewed_only else "")
         if action is None:
             return False
         # Read the clock again after any preceding slow operation; test clocks remain deterministic.
@@ -567,7 +579,10 @@ class SocialEngine:
                 if access is None or not access.allows_private_reply(action.account_id, action.recipient_id):
                     self.store.finish_action(action.action_id, Receipt("failed", detail="发送前不满足私信回复关系限制"), now)
                     return True
-            if self.settings.model_review and not action.approved_manually and action.kind not in {"like", "coin"} and action.review_state != "passed":
+            if self.settings.model_review and not action.approved_manually and action.kind not in {"like", "coin"} and not review_satisfied(action,self.settings.review_strategy):
+                if self.settings.review_strategy=="inline":
+                    self.store.record_action_review(action.action_id,"unavailable","旧队列缺少同次判断，请人工审核或重新生成",now,method="inline")
+                    return True
                 reviewed = self._review_action(action, now)
                 if reviewed is None:
                     return True
@@ -606,7 +621,7 @@ class SocialEngine:
                 "owner_addressed": owner, "source_message": event.text if event else None,
                 "content": document.public_context() if document else None,
                 "evidence_level": action.evidence_level,
-                "emojis": [{"key": e.key, "token": e.token, "meaning": e.label} for e in action.emojis],
+                "emojis": [{"key": e.key, "token": e.token, "meaning": e.label, "kind":e.kind} for e in action.emojis],
                 "target_comment": next((c for c in document.comments if c.get("id") == action.reply_to), None) if document and action.reply_to else None,
                 "artwork_metadata": {k: action.artwork[k] for k in ("title", "artist_name", "tags") if k in action.artwork},
                 "intent_result": self.store.get_setting(f"private_intent:{action.event_id}") if action.visibility == "private" else None,
@@ -619,4 +634,4 @@ class SocialEngine:
         except (ModelError, ValueError, TypeError, KeyError):
             state, reason = "unavailable", "模型审核未完成，转人工审核"
         self.store.record_action_review(action.action_id, state, reason, now)
-        return replace(action, review_state=state, review_reason=reason) if state == "passed" else None
+        return replace(action, review_state=state, review_reason=reason,review_method="independent") if state == "passed" else None

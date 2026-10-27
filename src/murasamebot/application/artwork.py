@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from murasamebot.domain.models import Action, Artwork, ModelError, Persona, PlatformError, PolicyError, stable_id
 from murasamebot.ports import ArtworkSource, ModelGateway, StateStore
+from murasamebot.application.review import inline_review
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,7 @@ class ArtDiscovery:
         self.settings, self.sources, self.store, self.model, self.persona = settings, sources, store, model, persona
 
     def run(self, now: float, *, agent_id: str, platform: str, account_id: str, timezone: str,
-            draft: bool, ttl_minutes: int) -> bool:
+            draft: bool, ttl_minutes: int, review_strategy: str = "none") -> bool:
         if not self.settings.enabled or self.store.get_setting("paused", False) or self.store.get_setting(f"platform_paused:{platform}", False):
             return False
         slot = self.settings.slot(now, timezone)
@@ -136,7 +137,10 @@ class ArtDiscovery:
                                         work.ref, text, now, now + ttl_minutes * 60, kind="artwork_share",
                                         evidence_level="metadata", dedup_key=f"artwork:{work.ref.key}", artwork=details,
                                         decision_reason="已筛选角色插画；图片转载仅限配置授权范围")
-                        return self.store.enqueue_action(action, draft=draft, now=now)
+                        needs_human = False
+                        if review_strategy=="inline":
+                            action,needs_human = inline_review(action,result)
+                        return self.store.enqueue_action(action, draft=draft or needs_human, now=now)
             self.store.audit("art_skipped", "本时段未找到符合关键词、内容筛选与转载授权的角色插画", now)
         except (ModelError, PolicyError, ValueError, KeyError) as exc:
             self.store.audit("art_error", f"{type(exc).__name__}: {exc}", now)

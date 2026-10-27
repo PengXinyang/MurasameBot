@@ -174,6 +174,7 @@ class Action:
     source_sequence: int = 0
     review_state: str = ""
     review_reason: str = ""
+    review_method: str = ""  # inline or independent; empty preserves legacy independent approvals
     context: ContentRef | None = None
     amount: int = 0
     proactive: bool = False

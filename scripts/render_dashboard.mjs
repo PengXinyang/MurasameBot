@@ -42,6 +42,11 @@ try{
   if(!await evaluate("config.processing.model_concurrency===7&&!document.querySelector('#save-status').classList.contains('dirty')"))throw Error('Settings save did not round-trip');
   await evaluate("document.querySelector('#concurrency').value='4';saveSettings()");
   report.settings_save_roundtrip=true;
+  await evaluate("document.querySelector('#reviewstrategy').value='independent';saveSettings()");
+  if(!await evaluate("config.review.strategy==='independent'"))throw Error('Review strategy did not round-trip');
+  await evaluate("document.querySelector('#reviewstrategy').value='inline';saveSettings()");
+  if(!await evaluate("config.review.strategy==='inline'"))throw Error('Inline judgement default was not restored');
+  report.review_strategy_save_roundtrip=true;
   await evaluate("chooseTab('memories');document.querySelector('#memory-recent_messages').value='25';saveMemorySettings()");
   if(!await evaluate("config.memory.recent_messages===25"))throw Error('Memory settings did not round-trip');
   await evaluate("(async()=>{document.querySelector('#memory-recent_messages').value='20';await saveMemorySettings();document.querySelector('#memory-query').value='今天';await searchMemory()})()");

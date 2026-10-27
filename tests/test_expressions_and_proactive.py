@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from murasamebot.adapters.platforms.bilibili import BilibiliAdapter
-from murasamebot.application.expressions import ExpressionService, ExpressionSettings, UNICODE_EMOJIS
+from murasamebot.application.expressions import ExpressionService, ExpressionSettings, UNICODE_EMOJIS, KAOMOJIS
 from murasamebot.domain.models import Action, ContentRef, Document, Emoji, PlatformError, PolicyError
 from test_bilibili_contracts import credentials
 from test_model_review import inbound, review_model
@@ -104,7 +104,7 @@ def test_catalog_failure_keeps_plain_text_and_backs_off(factory,now):
             self.calls+=1
             raise PlatformError("unavailable")
     source=Broken()
-    engine.expressions=ExpressionService(ExpressionSettings(),{"bilibili":source},store)
+    engine.expressions=ExpressionService(ExpressionSettings(kaomoji_enabled=False),{"bilibili":source},store)
     assert engine.expressions.options("bilibili","robot","public",now)==()
     assert engine.expressions.options("bilibili","robot","public",now+1)==()
     assert source.calls==1
@@ -152,7 +152,7 @@ def test_private_chat_uses_channel_appropriate_unicode_expressions(factory,now):
     original=model.decide
     def decide(op,payload):
         if op=="private_chat":
-            assert all(e["key"].startswith("unicode:") for e in payload["emoji_options"])
+            assert all(e["kind"] in {"unicode","kaomoji"} for e in payload["emoji_options"])
             return {"decision":"reply","text":"吾辈陪你聊一会儿。","emojis":[UNICODE_EMOJIS[0].key]}
         return original(op,payload)
     model.decide=decide
@@ -234,3 +234,115 @@ def test_dynamic_emojis_are_encoded_as_rich_text_nodes(tmp_path):
     assert adapter.send(action,{}).state=="accepted"
     assert posts[0]["dyn_req"]["content"]["contents"]==[
         {"raw_text":"主人更新啦。","type":1,"biz_id":""},{"raw_text":CONGYU.token,"type":9,"biz_id":""}]
+
+
+def test_official_pack_precedes_other_packs_even_when_character_matches(factory,now):
+    engine,store,_,_=factory()
+    other_character=Emoji("bilibili:2","[千恋万花表情包_芳乃开心]","芳乃开心")
+    unrelated=Emoji("bilibili:3","[其他表情包_丛雨]","丛雨")
+    class Packs:
+        def emoji_options(self,*args):
+            return (SMILE,unrelated,other_character,CONGYU)
+    engine.expressions=ExpressionService(ExpressionSettings(),{"bilibili":Packs()},store)
+    options=engine.expressions.options("bilibili","robot","public",now)
+    assert options[:4]==(CONGYU,other_character,unrelated,SMILE)
+    assert all(face in options for face in KAOMOJIS)
+
+
+def test_native_emote_and_one_kaomoji_share_total_limit_and_full_review(factory,now):
+    engine,store,model,_=factory(model_review=True)
+    with_expressions(engine,store)
+    model.reply={"decision":"reply","text":"吾辈也觉得挺有趣。","emojis":[CONGYU.key,KAOMOJIS[0].key]}
+    review_model(model)
+    engine.ingest(inbound(now));engine.process_one_event(now);engine.review_one(now)
+    action=Action.from_dict(json.loads(store.inspect("actions")[0]["payload"]))
+    assert action.emojis==(CONGYU,KAOMOJIS[0])
+    review=next(p for op,p in model.calls if op=="review_action")
+    assert review["proposed_text"].endswith(CONGYU.token+KAOMOJIS[0].token)
+    assert [e["kind"] for e in review["emojis"]]==["native","kaomoji"]
+
+
+def test_inline_faces_are_normalized_without_removing_chinese_parenthetical_text(factory):
+    engine,store,_,_=factory()
+    with_expressions(engine,store)
+    result={"text":"吾辈明白啦（先练曝光）"+KAOMOJIS[0].token*3+"(￣▽￣)",
+            "emojis":[KAOMOJIS[0].key,KAOMOJIS[1].key,SMILE.key]}
+    text,selected=engine.message_text(result,(*KAOMOJIS,SMILE),250)
+    assert text=="吾辈明白啦（先练曝光）"+KAOMOJIS[0].token+SMILE.token
+    assert len(selected)==2 and sum(e.kind=="kaomoji" for e in selected)==1
+
+
+def test_kaomoji_switch_character_budget_and_single_expression_limit(factory):
+    engine,store,_,_=factory()
+    with_expressions(engine,store,kaomoji_enabled=False)
+    assert engine.message_text({"text":"吾辈知道了","emojis":[KAOMOJIS[0].key]},KAOMOJIS,250)==("吾辈知道了",())
+    with_expressions(engine,store,max_per_message=1)
+    _,selected=engine.message_text({"text":"吾辈知道了","emojis":[CONGYU.key,KAOMOJIS[0].key]},(CONGYU,*KAOMOJIS),250)
+    assert selected==(CONGYU,)
+    assert engine.message_text({"text":"吾辈知道了","emojis":[KAOMOJIS[0].key]},KAOMOJIS,6)==("吾辈知道了",())
+
+
+def test_catalog_outage_can_fall_back_to_faces_without_claiming_native_access(factory,now):
+    engine,store,_,_=factory()
+    class Broken:
+        def emoji_options(self,*args):
+            raise PlatformError("unavailable")
+    engine.expressions=ExpressionService(ExpressionSettings(),{"bilibili":Broken()},store)
+    assert engine.expressions.options("bilibili","robot","public",now)==KAOMOJIS
+    assert engine.expressions.options("bilibili","robot","public",now+1)==KAOMOJIS
+
+
+def test_private_chat_can_choose_kaomoji(factory,now):
+    engine,store,model,_,_=chat_engine(factory)
+    with_expressions(engine,store)
+    original=model.decide
+    def decide(op,payload):
+        if op=="private_chat":
+            return {"decision":"reply","text":"吾辈陪着你呢。","emojis":[KAOMOJIS[0].key]}
+        return original(op,payload)
+    model.decide=decide
+    engine.ingest(private_event(now));engine.process_one_event(now)
+    action=Action.from_dict(json.loads(store.inspect("actions")[0]["payload"]))
+    assert action.emojis==(KAOMOJIS[0],) and action.text.endswith(KAOMOJIS[0].token)
+
+
+def test_kaomoji_is_plain_text_in_dynamic_and_native_still_rich_text(tmp_path):
+    posts=[]
+    def handle(request):
+        if request.url.path.endswith("nav"):
+            data={"isLogin":True,"mid":999}
+        elif request.url.path.endswith("panel/web"):
+            data={"packages":[{"emote":[{"id":102084,"text":CONGYU.token,"meta":{"alias":"丛雨Ciallo"}}]}]}
+        elif request.url.path.endswith("detail"):
+            data={"item":{"modules":{"module_author":{"mid":424242}}}}
+        else:
+            posts.append(json.loads(request.content));data={"dyn_id_str":"777"}
+        return httpx.Response(200,json={"code":0,"data":data})
+    adapter=BilibiliAdapter(credentials(tmp_path),client=httpx.Client(transport=httpx.MockTransport(handle)))
+    action=Action("share","agent","bilibili","999",ContentRef("bilibili","post","900"),"主人更新啦。"+CONGYU.token+KAOMOJIS[0].token,1000,2000,
+                  kind="owner_repost",source_author_id="424242",emojis=(CONGYU,KAOMOJIS[0]))
+    assert adapter.send(action,{}).state=="accepted"
+    nodes=posts[0]["dyn_req"]["content"]["contents"]
+    assert nodes[-1]=={"raw_text":KAOMOJIS[0].token,"type":1,"biz_id":""}
+    assert nodes[-2]["type"]==9
+
+
+def test_fake_kaomoji_is_rejected_without_network(tmp_path):
+    adapter=BilibiliAdapter(credentials(tmp_path),client=httpx.Client(transport=httpx.MockTransport(lambda r:pytest.fail("not needed"))))
+    fake=Emoji("kaomoji:happy","发明的符号","开心","kaomoji")
+    action=Action("a","agent","bilibili","999",None,"吾辈来了发明的符号",1000,2000,emojis=(fake,))
+    assert adapter.check_emojis(action).state=="failed"
+
+
+def test_kaomoji_disabled_after_generation_blocks_pending_action(tmp_path):
+    from murasamebot.bootstrap.config import Config
+    from murasamebot.bootstrap.runtime import build
+    from test_architecture_and_config import write_config
+    config=Config(write_config(tmp_path))
+    config.save_local({"expressions":{"kaomoji_enabled":False}})
+    runtime=build(Config(config.path))
+    try:
+        action=Action("a",runtime.store.agent_id,"bilibili","999",None,"吾辈来了。"+KAOMOJIS[0].token,1000,2000,emojis=(KAOMOJIS[0],))
+        assert "颜文字已关闭" in runtime.engine.action_policy(action,1001)
+    finally:
+        runtime.close()

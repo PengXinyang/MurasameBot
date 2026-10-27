@@ -50,7 +50,7 @@ class Config:
         raw = yaml.safe_load(self.path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise ValueError("配置必须为 YAML 对象")
-        raw = merge({"memory":asdict(MemorySettings())},raw)
+        raw = merge({"memory":asdict(MemorySettings()),"review":{"strategy":"inline"}},raw)
         override = yaml.safe_load(self.local_path.read_text(encoding="utf-8")) if self.local_path.exists() else {}
         if override and not isinstance(override, dict):
             raise ValueError("本地覆盖配置必须为对象")
@@ -73,6 +73,9 @@ class Config:
 
     @staticmethod
     def validate(data: dict):
+        review = data.get("review",{})
+        if not isinstance(review,dict) or set(review)-{"strategy"} or not isinstance(review.get("strategy","inline"),str) or review.get("strategy","inline") not in {"inline","independent"}:
+            raise ValueError("审核策略只能为 inline（生成时判断）或 independent（独立模型复核）")
         memory = data.get("memory", {})
         if not isinstance(memory,dict) or set(memory)-set(MemorySettings.__dataclass_fields__):
             raise ValueError("未知的记忆设置")
@@ -109,13 +112,15 @@ class Config:
         expressions = data.get("expressions", {})
         if type(expressions.get("enabled", True)) is not bool:
             raise ValueError("表情开关需要为布尔值")
+        if type(expressions.get("kaomoji_enabled", True)) is not bool:
+            raise ValueError("颜文字开关需要为布尔值")
         count = expressions.get("max_per_message", 2)
         if type(count) is not int or not 1 <= count <= 2:
             raise ValueError("每条消息表情上限需要为 1 或 2")
         cache = expressions.get("cache_minutes", 360)
         if type(cache) is not int or not 1 <= cache <= 1440:
             raise ValueError("表情列表缓存需要为 1 至 1440 分钟")
-        keywords = expressions.get("preferred_keywords", ["丛雨"])
+        keywords = expressions.get("preferred_keywords", ["千恋万花", "丛雨"])
         if not isinstance(keywords, list) or not 1 <= len(keywords) <= 10 or any(not isinstance(k,str) or not k.strip() or len(k)>80 for k in keywords):
             raise ValueError("表情优先关键词需要为 1 至 10 项简短文字")
         if type(browse.get("enabled")) is not bool or type(data.get("paused", False)) is not bool:
@@ -257,6 +262,7 @@ class Config:
         return Behaviour(agent_id=self.data["agent_id"], owner_person_id=self.data["owner_person_id"],
                          account_id=account_id, timezone=self.data["timezone"], draft=self.data["mode"] == "draft",
                          model_review=self.data["mode"] == "reviewed",
+                         review_strategy=self.data.get("review",{}).get("strategy","inline"),
                          categories=tuple(str(value) for value in browse["categories"]),
                          windows=tuple((w["start"], w["end"]) for w in browse["windows"]),
                          weekdays=tuple(browse["weekdays"]), browsing_enabled=browse["enabled"],
@@ -291,7 +297,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory"}
+        allowed = {"mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if set(patch.get("artwork", {})) - {"enabled", "delivery", "times", "weekdays", "grace_minutes", "candidate_limit", "max_caption_characters", "keywords", "sources"}:
@@ -302,7 +308,7 @@ class Config:
             raise ValueError("模型密钥、地址与模型名称请在本地文件配置")
         if set(patch.get("processing", {})) - {"model_concurrency"}:
             raise ValueError("未知的并发处理设置")
-        if set(patch.get("expressions", {})) - {"enabled", "max_per_message", "cache_minutes", "preferred_keywords"}:
+        if set(patch.get("expressions", {})) - {"enabled", "kaomoji_enabled", "max_per_message", "cache_minutes", "preferred_keywords"}:
             raise ValueError("未知的表情设置")
         if set(patch.get("bilibili", {})) - {"owner_new_videos", "owner_new_dynamics", "repost_owner_videos", "repost_owner_dynamics", "private_messages_enabled", "reply_poll_seconds", "poll_seconds", "read_video_subtitles", "inbox_batch_limit", "notification_pages", "private_session_pages", "private_message_pages"}:
             raise ValueError("登录信息请在本地私密配置中管理")
