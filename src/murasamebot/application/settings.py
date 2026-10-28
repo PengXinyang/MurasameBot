@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from murasamebot.application.autonomy import AutonomySettings
 
 
 @dataclass(frozen=True)
@@ -40,3 +41,5 @@ class Behaviour:
     max_comment_characters: int = 250
     max_private_characters: int = 400
     max_recommendation_characters: int = 80
+    private_messages_enabled: bool = True
+    autonomy: AutonomySettings = field(default_factory=AutonomySettings)

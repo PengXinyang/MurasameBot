@@ -16,6 +16,7 @@ from PIL import Image
 
 from murasamebot.adapters.network import client as network_client
 from murasamebot.adapters.platforms.bilibili_private import BilibiliPrivateMixin
+from murasamebot.adapters.platforms.bilibili_comments import read_comment_chain
 from murasamebot.adapters.platforms.bilibili_emojis import BilibiliEmojiMixin
 from murasamebot.adapters.platforms.bilibili_publication import BilibiliPublicationMixin, classify_comment
 
@@ -65,7 +66,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                  max_age_hours: int = 24, client: httpx.Client | None = None,
                  proxy_url: str = "", image_client: httpx.Client | None = None,
                  private_session_pages: int = 3, private_message_pages: int = 3, private_max_age_hours: int = 24,
-                 read_video_subtitles: bool = True, inbox_batch_limit: int = 90):
+                 read_video_subtitles: bool = True, inbox_batch_limit: int = 90, proactive_recipient_id: str = ""):
         self.credentials_path = credentials_path
         self.expected_uid = str(expected_uid or "")
         self.pages = max(1, min(pages, 20))
@@ -77,6 +78,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         self.private_max_age_hours = private_max_age_hours
         self.read_video_subtitles = read_video_subtitles
         self.inbox_batch_limit = inbox_batch_limit
+        self.proactive_recipient_id = str(proactive_recipient_id)
         self.poll_warnings = []
 
         self.client = client or network_client(proxy_url=proxy_url, headers=WEB_HEADERS,
@@ -344,11 +346,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         type_ = COMMENT_TYPES[ref.kind]
         comments = []
         if reply_to:
-            data, _ = self._request("/x/v2/reply/reply", params={"oid": numeric(ref.external_id), "type": type_, "root": numeric(root or reply_to), "ps": 20, "pn": 1})
-            rows = ([data["root"]] if data.get("root") else []) + (data.get("replies") or [])
-        else:
-            data, _ = self._request("/x/v2/reply/main", params={"oid": numeric(ref.external_id), "type": type_, "mode": 3, "ps": 5})
-            rows = data.get("replies") or []
+            return self._comment_chain(ref, reply_to, root)[0]
+        data, _ = self._request("/x/v2/reply/main", params={"oid": numeric(ref.external_id), "type": type_, "mode": 3, "ps": 5})
+        rows = data.get("replies") or []
         for row in rows:
             author_id = str((row.get("member") or {}).get("mid") or "")
             if author_id and author_id == self.account_id:
@@ -360,6 +360,10 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                              "author_id": author_id,
                              "text": str((row.get("content") or {}).get("message", ""))[:1500]})
         return tuple(comments)
+
+    def _comment_chain(self, ref: ContentRef, reply_to: str, root: str):
+        return read_comment_chain(self._request, oid=numeric(ref.external_id), type_=COMMENT_TYPES[ref.kind],
+                                  target=numeric(reply_to), root=numeric(root or reply_to), account_id=self.account_id)
 
     def _subtitle(self, bvid: str, cid: str) -> str:
         data, _ = self._request("/x/player/v2", params={"bvid": bvid, "cid": cid})
@@ -441,10 +445,15 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                 raise PlatformError("专栏通知可识别，正文读取尚不支持", code="unsupported_content")
             title, category, url = "动态", "", "https://www.bilibili.com/opus/" + post_id
             level = "text" if body else "metadata"
-        comments = self._comments(ref, reply_to, root) if ref.kind != "post" else ()
+        coverage = None
+        if reply_to and ref.kind != "post":
+            comments, coverage = self._comment_chain(ref, reply_to, root)
+        else:
+            comments = self._comments(ref, "", "") if ref.kind != "post" else ()
         images = self.dynamic_images(item) if ref.kind in {"dynamic", "post", "draw"} else ()
         parent = ContentRef("bilibili", "post", post_id) if ref.kind in {"dynamic", "post", "draw"} else None
-        return Document(ref, title, body[:20000], level, author, category, url, comments, images, parent=parent)
+        return Document(ref, title, body[:20000], level, author, category, url, comments, images, parent=parent,
+                        comment_context=coverage)
 
     @staticmethod
     def dynamic_images(item: dict) -> tuple[ImageRef, ...]:
@@ -506,9 +515,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             return emoji_error
         if action.kind in {"like", "coin"}:
             return self._send_reaction(action, before_write=before_write)
-        if action.kind == "private_reply":
+        if action.kind in {"private_reply", "proactive_private"}:
             return self._send_private(action, before_write=before_write)
-        if action.kind in {"owner_repost", "artwork_share"}:
+        if action.kind in {"owner_repost", "artwork_share", "autonomous_post"}:
             return self._send_dynamic(action, before_write=before_write)
         if action.content is None or action.content.kind not in COMMENT_TYPES:
             raise PlatformError("B 站适配器不支持此发送目标")
@@ -680,6 +689,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                 raise PlatformError("转发前核验的作者与主人不一致")
             request["scene"] = 4
             body["web_repost_src"] = {"dyn_id_str": numeric(action.content.external_id)}
+        elif action.kind == "autonomous_post":
+            if action.visibility != "public" or action.content or action.mentions or action.artwork or action.recipient_id:
+                raise PlatformError("自主文字动态包含不允许的来源或接收对象")
         else:
             work = action.artwork
             if not work or work.get("delivery") not in {"image", "link"}:

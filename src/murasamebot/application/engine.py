@@ -12,6 +12,7 @@ from murasamebot.application.settings import Behaviour
 from murasamebot.application.vision import VisionService
 from murasamebot.application.expressions import ExpressionService
 from murasamebot.application.memory import MemoryService
+from murasamebot.application.autonomy import AutonomyService
 from murasamebot.application.review import inline_review, review_satisfied
 from murasamebot.domain.models import Action, ContentRef, Document, Event, ModelError, Persona, PlatformError, PolicyError, Receipt, stable_id
 from murasamebot.ports import ActionSink, ContentProvider, ModelGateway, PrivateMessageAccess, StateStore
@@ -51,6 +52,7 @@ class SocialEngine:
         self.vision = vision
         self.expressions = expressions
         self.memory_service = memory or MemoryService(store,model,timezone=settings.timezone)
+        self.autonomy = AutonomyService(self)
 
     def message_decision(self, operation, payload, platform, account_id, channel, now):
         options = self.expressions.options(platform, account_id, channel, now) if self.expressions else ()
@@ -304,6 +306,8 @@ class SocialEngine:
         result, options = self.message_decision("reply", {
             "persona": self.persona.prompt(owner_addressed=person == self.settings.owner_person_id),
             "message": event.text,
+            "reply_target": {"id": event.reply_to, "root": event.thread_root,
+                             "author_id": event.actor_id, "author_name": event.actor_name},
             "content": document.public_context() if document else None,
             **context,
             "max_characters": self.settings.max_comment_characters,
@@ -560,12 +564,13 @@ class SocialEngine:
                                          self.settings.recommendation_gap_minutes * 60,
                                          self.settings.browsing_enabled and next_window(now, self.settings.timezone, self.settings.windows, self.settings.weekdays) == now,
                                          manual_only=self.settings.draft, require_review=self.settings.model_review and pre_reviewed_only,
-                                         required_review_method=self.settings.review_strategy if self.settings.model_review and pre_reviewed_only else "")
+                                         required_review_method=self.settings.review_strategy if self.settings.model_review and pre_reviewed_only else "",
+                                         autonomous_kinds=self.autonomy.allowed_kinds(now))
         if action is None:
             return False
         # Read the clock again after any preceding slow operation; test clocks remain deterministic.
         reason = self.store.validate_action(action, now)
-        reason = reason or self.action_policy(action, now)
+        reason = reason or self.action_policy(action, now) or self.autonomy.guard(action, now)
         if reason or self.paused(action.platform):
             self.store.finish_action(action.action_id, Receipt("failed", detail=reason or "paused_before_send"), now)
             return True
@@ -581,7 +586,7 @@ class SocialEngine:
             self.store.finish_action(action.action_id, Receipt("failed", detail="目标平台尚未接入"), now)
             return True
         try:
-            if action.kind == "private_reply":
+            if action.kind in {"private_reply", "proactive_private"}:
                 access = self.private_access.get(action.platform)
                 if access is None or not access.allows_private_reply(action.account_id, action.recipient_id):
                     self.store.finish_action(action.action_id, Receipt("failed", detail="发送前不满足私信回复关系限制"), now)
@@ -596,10 +601,10 @@ class SocialEngine:
                 action = reviewed
             def before_write():
                 moment = time.time() if live_clock else now
-                local_ok = not self.store.validate_action(action, moment) and not self.paused(action.platform) and not self.action_policy(action, moment)
+                local_ok = not self.store.validate_action(action, moment) and not self.paused(action.platform) and not self.action_policy(action, moment) and not self.autonomy.guard(action, moment)
                 if not local_ok:
                     return False
-                if action.kind == "private_reply":
+                if action.kind in {"private_reply", "proactive_private"}:
                     access = self.private_access.get(action.platform)
                     return access is not None and access.allows_private_reply(action.account_id, action.recipient_id)
                 return True
@@ -619,6 +624,12 @@ class SocialEngine:
     def _review_action(self, action: Action, now: float) -> Action | None:
         event = self.store.event(action.event_id) if action.event_id else None
         document = self.store.cached_document(action.content, now) if action.content else None
+        # Other speakers can update the cache for the same video concurrently.
+        # A review must use this action's target, never another speaker's chain.
+        if action.content and action.reply_to and (not document or not document.comment_context or
+                                                   document.comment_context.target_id != action.reply_to):
+            document = self.document(action.content, now, reply_to=action.reply_to, root=action.thread_root,
+                                     context=event.share_content if event else None)
         owner = bool(self.settings.owner_person_id in action.mentions or action.subject_person_id == self.settings.owner_person_id or
                      (event and self.store.resolve_person(event.platform, event.actor_id) == self.settings.owner_person_id))
         try:

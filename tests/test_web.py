@@ -114,6 +114,13 @@ def test_dashboard_assets_do_not_expose_character_configuration(tmp_path):
                 assert image.status_code==200 and image.content.startswith(b"\x89PNG\r\n\x1a\n")
                 assert image.headers["content-type"]=="image/png"
                 assert image.headers["x-content-type-options"]=="nosniff"
+            for name, mime, magic in [("dashboard-smile.jpg", "image/jpeg", b"\xff\xd8\xff"),
+                                      ("dashboard-letter.jpg", "image/jpeg", b"\xff\xd8\xff"),
+                                      ("dashboard-kimono.png", "image/png", b"\x89PNG\r\n\x1a\n")]:
+                image=client.get('/assets/character/'+name)
+                assert image.status_code==200 and image.content.startswith(magic)
+                assert image.headers["content-type"]==mime
+                assert image.headers["x-content-type-options"]=="nosniff"
             for name in ("settings.yml",".env","../settings.yml","%2e%2e%2fsettings.yml","%5c..%5c.env"):
                 response=client.get("/assets/character/"+name,headers={"Authorization":"Bearer token"})
                 assert response.status_code==404

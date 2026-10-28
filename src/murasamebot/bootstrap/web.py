@@ -19,6 +19,9 @@ from murasamebot.domain.models import PlatformError
 CHARACTER_ASSETS = {
     "/assets/character/normal.png": "正常.png",
     "/assets/character/happy.png": "高兴.png",
+    "/assets/character/dashboard-smile.jpg": "dashboard-smile.jpg",
+    "/assets/character/dashboard-letter.jpg": "dashboard-letter.jpg",
+    "/assets/character/dashboard-kimono.png": "dashboard-kimono.png",
 }
 CLIENT_DISCONNECTS = (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)
 
@@ -94,9 +97,11 @@ def handler_for(config_path: Path, token: str):
                         config = Config(config_path)
                         asset = config.file("character_source").parent / "avatar" / CHARACTER_ASSETS[path]
                         body = asset.read_bytes()
-                        if len(body) > 10_000_000 or not body.startswith(b"\x89PNG\r\n\x1a\n"):
+                        is_png = asset.suffix == ".png" and body.startswith(b"\x89PNG\r\n\x1a\n")
+                        is_jpeg = asset.suffix == ".jpg" and body.startswith(b"\xff\xd8\xff")
+                        if len(body) > 10_000_000 or not (is_png or is_jpeg):
                             raise ValueError("无效的界面图片")
-                        self.response(200, body, content_type="image/png")
+                        self.response(200, body, content_type="image/png" if is_png else "image/jpeg")
                 except (OSError, ValueError, KeyError):
                     self.response(404, {"error": "界面素材不可用"})
                 return

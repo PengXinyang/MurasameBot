@@ -25,6 +25,12 @@ def number(value) -> int:
 
 
 class BilibiliPrivateMixin:
+    @staticmethod
+    def private_conversation(account_id: str, peer_id: str) -> str:
+        if not number(account_id) or not number(peer_id):
+            raise failure("无效的私信会话标识")
+        return f"bilibili:{account_id}:private:{peer_id}"
+
     def allows_private_reply(self, account_id: str, peer_id: str) -> bool:
         if not self.configured or not number(account_id) or not number(peer_id) or account_id == peer_id:
             return False
@@ -153,7 +159,9 @@ class BilibiliPrivateMixin:
             raise failure("私信正文为空或超过平台字节限制")
         device = str(uuid4())
         params = self._signed({"w_sender_uid": action.account_id, "w_receiver_id": action.recipient_id, "w_dev_id": device})
-        if not self._private_source_exists(action):
+        if action.kind == "proactive_private" and (not self.proactive_recipient_id or action.recipient_id != self.proactive_recipient_id or action.event_id or action.reply_to):
+            return Receipt("failed", detail="主动私信目标不是配置的主人")
+        if action.kind != "proactive_private" and not self._private_source_exists(action):
             return Receipt("failed", detail="原始私信不存在、已撤回或来源不匹配")
         # No owner exception, no relationship cache. This is the last remote read.
         if not self.allows_private_reply(action.account_id, action.recipient_id):

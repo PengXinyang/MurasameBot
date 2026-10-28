@@ -13,6 +13,7 @@ import yaml
 
 from murasamebot.application.settings import Behaviour
 from murasamebot.application.memory import MemorySettings
+from murasamebot.application.autonomy import AutonomySettings
 
 
 def merge(base: dict, override: dict) -> dict:
@@ -52,6 +53,7 @@ class Config:
             raise ValueError("配置必须为 YAML 对象")
         from murasamebot.adapters.network import DIRECT_DOMAINS, GFWLIST_URL
         raw = merge({"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
+                     "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "limits":{"event_retry_seconds":60},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
                                 "gfwlist_cache":"data/gfwlist.txt", "gfwlist_refresh_hours":6,
@@ -81,6 +83,35 @@ class Config:
         review = data.get("review",{})
         if not isinstance(review,dict) or set(review)-{"strategy"} or not isinstance(review.get("strategy","inline"),str) or review.get("strategy","inline") not in {"inline","independent"}:
             raise ValueError("审核策略只能为 inline（生成时判断）或 independent（独立模型复核）")
+        autonomy = data.get("autonomy", {})
+        if not isinstance(autonomy,dict) or set(autonomy)-set(AutonomySettings.__dataclass_fields__):
+            raise ValueError("未知的自主发布设置")
+        for key in ("dynamic_enabled","private_enabled"):
+            if type(autonomy.get(key)) is not bool:
+                raise ValueError("自主发布开关必须为布尔值")
+        for key,low,high in (("decision_interval_minutes",1,1440),("daily_decision_limit",1,100),
+                ("max_delay_minutes",0,1440),("dynamic_daily_limit",1,20),("private_daily_limit",1,20),
+                ("dynamic_gap_minutes",1,10080),("private_gap_minutes",1,10080),
+                ("private_idle_minutes",1,1440),("max_post_characters",1,1000)):
+            value=autonomy.get(key)
+            if type(value) is not int or not low<=value<=high:
+                raise ValueError(f"自主发布 {key} 需要为 {low} 至 {high} 的整数")
+        windows=autonomy.get("windows")
+        if not isinstance(windows,list) or not 1<=len(windows)<=8:
+            raise ValueError("自主发布需要1至8个允许时段")
+        for window in windows:
+            if not isinstance(window,dict) or set(window)!={"start","end"}:
+                raise ValueError("自主发布时段需要start和end")
+            for value in window.values():
+                if not isinstance(value,str) or not re.fullmatch(r"\d{2}:\d{2}",value):
+                    raise ValueError("自主发布时段格式为HH:MM")
+                daytime.fromisoformat(value)
+        days=autonomy.get("weekdays")
+        if not isinstance(days,list) or not days or any(type(d) is not int or d not in range(7) for d in days):
+            raise ValueError("自主发布星期需要0至6的列表")
+        topics=autonomy.get("topics")
+        if not isinstance(topics,list) or not 1<=len(topics)<=20 or any(not isinstance(t,str) or not t.strip() or len(t)>120 for t in topics):
+            raise ValueError("自主动态主题需要1至20条简短文字")
         memory = data.get("memory", {})
         if not isinstance(memory,dict) or set(memory)-set(MemorySettings.__dataclass_fields__):
             raise ValueError("未知的记忆设置")
@@ -280,7 +311,8 @@ class Config:
     def behaviour(self, account_id: str = "") -> Behaviour:
         browse, limits = self.data["browsing"], self.data["limits"]
         values = {key: limits[key] for key in limits if key in {f.name for f in fields(Behaviour)}}
-        return Behaviour(agent_id=self.data["agent_id"], owner_person_id=self.data["owner_person_id"],
+        return Behaviour(autonomy=AutonomySettings.from_config(self.data["autonomy"]), agent_id=self.data["agent_id"], owner_person_id=self.data["owner_person_id"],
+                         private_messages_enabled=self.data["bilibili"].get("private_messages_enabled",True),
                          account_id=account_id, timezone=self.data["timezone"], draft=self.data["mode"] == "draft",
                          model_review=self.data["mode"] == "reviewed",
                          review_strategy=self.data.get("review",{}).get("strategy","inline"),
@@ -326,7 +358,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if set(patch.get("network", {})) - {"proxy_enabled", "proxy_url", "proxy_mode", "gfwlist_refresh_hours", "direct_domains"}:

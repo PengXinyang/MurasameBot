@@ -85,6 +85,16 @@ class VisualEvidence:
 
 
 @dataclass(frozen=True)
+class CommentContext:
+    target_id: str
+    root_id: str
+    status: str
+    missing_ids: tuple[str, ...] = ()
+    issues: tuple[str, ...] = ()
+    requests: int = 0
+
+
+@dataclass(frozen=True)
 class Document:
     ref: ContentRef
     title: str
@@ -97,6 +107,7 @@ class Document:
     images: tuple[ImageRef, ...] = ()
     visual: VisualEvidence | None = None
     parent: ContentRef | None = None
+    comment_context: CommentContext | None = None
 
     def public_context(self) -> dict[str, Any]:
         return asdict(self)
@@ -107,6 +118,11 @@ class Document:
         values["ref"] = ContentRef(**values["ref"])
         values["comments"] = tuple(values.get("comments", ()))
         values["images"] = tuple(ImageRef(**image) for image in values.get("images", ()))
+        if isinstance(values.get("comment_context"), dict):
+            coverage = dict(values["comment_context"])
+            for name in ("missing_ids", "issues"):
+                coverage[name] = tuple(coverage.get(name, ()))
+            values["comment_context"] = CommentContext(**coverage)
         if isinstance(values.get("parent"), dict):
             values["parent"] = ContentRef(**values["parent"])
         if isinstance(values.get("visual"), dict):
@@ -183,6 +199,8 @@ class Action:
     proactive: bool = False
     emojis: tuple[Emoji, ...] = ()
     memory_epoch: int = -1  # recheck derived-memory invalidation immediately before dispatch
+    not_before: float = 0  # Persisted earliest delivery time; never a sleeping worker.
+    autonomy_version: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

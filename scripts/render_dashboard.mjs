@@ -30,6 +30,13 @@ try{
   for(const screen of plan.screens){
     await call('Emulation.setDeviceMetricsOverride',{width:screen.width,height:screen.height,deviceScaleFactor:1,mobile:screen.width<620});
     await evaluate(`chooseTab(${JSON.stringify(screen.tab)});chooseSettingsGroup(${JSON.stringify(screen.group||'browsing')});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+    if(screen.tab==='actions'){
+      await evaluate(`chooseActionGroup(${JSON.stringify(screen.group)})`);
+      const grouped=await evaluate("({selected:document.querySelector('[data-action-group][aria-selected=true]').dataset.actionGroup,ids:[...document.querySelectorAll('#actionlist [data-action-id]')].map(n=>n.dataset.actionId)})");
+      const expected={private:['preview-private','preview-proactive'],comments:['preview-comment','preview-repost','preview-art','preview-autonomous'],reactions:['preview-like','preview-coin']}[screen.group];
+      if(grouped.selected!==screen.group||JSON.stringify(grouped.ids.sort())!==JSON.stringify(expected.sort()))throw Error('Action category lost or mixed records: '+JSON.stringify(grouped));
+      if(screen.group!=='reactions'&&!await evaluate("document.querySelector('#actionlist').textContent.includes('计划时间')"))throw Error('Scheduled initiative time was not shown');
+    }
     const metrics=await evaluate("({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,controls:document.querySelectorAll('#settings input,#settings select,#settings textarea').length,missingArt:[...document.images].filter(image=>!image.naturalWidth).length})");
     if(metrics.scrollWidth>metrics.width)throw Error('Horizontal page overflow: '+screen.tab+' '+screen.width+' '+JSON.stringify(metrics));
     const screenshot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
@@ -37,11 +44,31 @@ try{
     report.screens.push({tab:screen.tab,group:screen.group||'browsing',...metrics});
     console.log(screen.output);
   }
+  await evaluate("chooseTab('actions');chooseActionGroup('private');refresh()");
+  if(!await evaluate("activeActionGroup==='private'&&document.querySelector('#actionlist [data-op=approve]')?.dataset.id==='preview-private'&&!document.querySelector('#actionlist [data-op=\"publication/check\"]')"))throw Error('Private approval controls or selected category changed on refresh');
+  await evaluate("document.querySelector('#action-tab-private').focus();document.querySelector('#action-tab-private').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
+  if(!await evaluate("activeActionGroup==='comments'&&document.activeElement.id==='action-tab-comments'&&document.querySelector('#actionlist [data-op=\"publication/check\"]')?.dataset.id==='preview-comment'"))throw Error('Action keyboard navigation or comment check control failed');
+  await evaluate("chooseActionGroup('reactions');document.querySelector('#actionlist [data-op=reject][data-id=preview-coin]').click()");
+  await until(()=>evaluate("actionRows.some(row=>row.action_id==='preview-coin'&&row.state==='cancelled')"));
+  if(!await evaluate("activeActionGroup==='reactions'&&document.querySelector('#action-count-reactions').textContent==='2'&&!document.querySelector('#actionlist [data-op=reject][data-id=preview-coin]')"))throw Error('Reaction cancellation did not preserve grouping');
+  report.action_groups={categories:3,refresh_preserves_selection:true,keyboard_navigation:true,private_approval_control:true,public_check_control:true,reaction_cancel_roundtrip:true};
+  await evaluate("actionRows=[];renderActionGroups()");
+  if(!await evaluate("document.querySelector('#actionlist').textContent.includes('还没有点赞或投币记录')&&document.querySelector('#action-count-private').textContent==='0'&&document.querySelector('#action-count-comments').textContent==='0'&&document.querySelector('#action-count-reactions').textContent==='0'"))throw Error('Action category empty state failed');
+  await evaluate("refresh()");
+  await call('Page.reload');
+  await until(()=>evaluate("actionRows.length===8&&!!document.querySelector('#limit-daily_comments')"));
+  if(!await evaluate("activeActionGroup==='reactions'&&document.querySelector('#action-tab-reactions').getAttribute('aria-selected')==='true'"))throw Error('Action selection did not survive page reload');
+  report.action_groups.empty_state=true;
+  report.action_groups.reload_preserves_selection=true;
   // Round-trip only the isolated preview configuration, without a worker or model calls.
   await evaluate("chooseTab('settings');chooseSettingsGroup('messages');document.querySelector('#concurrency').value='7';document.querySelector('#concurrency').dispatchEvent(new Event('input',{bubbles:true}));saveSettings()");
   if(!await evaluate("config.processing.model_concurrency===7&&!document.querySelector('#save-status').classList.contains('dirty')"))throw Error('Settings save did not round-trip');
   await evaluate("document.querySelector('#concurrency').value='4';saveSettings()");
   report.settings_save_roundtrip=true;
+  await evaluate("document.querySelector('#autonomy-private_enabled').value='true';document.querySelector('#autonomy-max_delay_minutes').value='45';saveSettings()");
+  if(!await evaluate("config.autonomy.private_enabled===true&&config.autonomy.max_delay_minutes===45"))throw Error('Autonomy settings did not round-trip');
+  await evaluate("document.querySelector('#autonomy-private_enabled').value='false';document.querySelector('#autonomy-max_delay_minutes').value='120';saveSettings()");
+  report.autonomy_settings_save_roundtrip=true;
   await evaluate("document.querySelector('#reviewstrategy').value='independent';saveSettings()");
   if(!await evaluate("config.review.strategy==='independent'"))throw Error('Review strategy did not round-trip');
   await evaluate("document.querySelector('#reviewstrategy').value='inline';saveSettings()");

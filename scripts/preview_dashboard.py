@@ -58,6 +58,22 @@ def main():
     preview_store.claim_action(stamp,100,100,stamp-1,0,0)
     preview_store.finish_action("preview-comment",Receipt("accepted","800","平台已受理，公开可见性尚未独立验证",
         publication_check=PublicationCheck("self_only","平台状态17：疑似仅发送账号可见，未自动重发",stamp,17,1)),stamp)
+    for key, kind, text, draft in [("preview-like", "like", "", False),
+                                   ("preview-coin", "coin", "", True),
+                                   ("preview-repost", "owner_repost", "主人这期分享很有趣。", True),
+                                   ("preview-art", "artwork_share", "今日的小小分享。", True)]:
+        preview_store.enqueue_action(Action(key, data["agent_id"], "bilibili", "999", ContentRef("bilibili", "video", "12345"),
+            text, stamp, stamp+3600, kind=kind, amount=1 if kind=="coin" else 0,
+            review_state="rejected" if draft else "passed", review_method="inline"), draft=draft, now=stamp)
+    policy = Config(path).behaviour().autonomy
+    for key, kind, private in [("preview-autonomous", "autonomous_post", False), ("preview-proactive", "proactive_private", True)]:
+        preview_store.enqueue_action(Action(key, data["agent_id"], "bilibili", "999", None,
+            "唔，今日也有值得慢慢聊的小事。", stamp, stamp+3600, kind=kind, not_before=stamp+600,
+            autonomy_version=policy.version(), visibility="private" if private else "public",
+            conversation_id=preview_event.conversation_id if private else "",
+            recipient_id="424242" if private else "", subject_person_id="owner" if private else "",
+            binding_version=preview_store.binding("owner","bilibili")["version"] if private else 0,
+            review_state="passed",review_method="inline"), draft=False, now=stamp)
     output = ROOT.parent / "docs" / "dashboard-preview.png"
     output.parent.mkdir(exist_ok=True)
     browser = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
@@ -73,7 +89,12 @@ def main():
                        ("settings", "browsing", 1440, 1460, output.parent / "settings-preview.png"),
                        ("settings", "messages", 1440, 1850, output.parent / "message-settings-preview.png"),
                        ("settings", "expression", 1440, 1200, output.parent / "expression-settings-preview.png"),
-                       ("actions", "browsing", 1440, 1000, output.parent / "model-review-preview.png"),
+                       ("actions", "comments", 1440, 1100, output.parent / "model-review-preview.png"),
+                       ("actions", "private", 1440, 1000, output.parent / "private-actions-preview.png"),
+                       ("actions", "reactions", 1440, 1000, output.parent / "reaction-actions-preview.png"),
+                       ("actions", "comments", 390, 1280, output.parent / "mobile-comment-actions-preview.png"),
+                       ("actions", "private", 390, 1280, output.parent / "mobile-private-actions-preview.png"),
+                       ("actions", "reactions", 390, 1280, output.parent / "mobile-reaction-actions-preview.png"),
                        ("memories", "browsing", 1440, 1500, output.parent / "memory-preview.png"),
                        ("overview", "browsing", 390, 1280, output.parent / "mobile-preview.png"),
                        ("settings", "messages", 390, 1280, output.parent / "mobile-settings-preview.png"),

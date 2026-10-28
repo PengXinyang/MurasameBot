@@ -102,6 +102,25 @@ class SQLiteMemory:
                     event.occurred_at if occurred_at is None else occurred_at))
 
     def _archive_action(self, db, action, now):
+        if action.kind in {"autonomous_post", "proactive_private"} and action.text:
+            from dataclasses import asdict
+            event_id = stable_id(self.agent_id, "outgoing-source", action.action_id)
+            if db.execute("SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?", (self.agent_id,event_id)).fetchone():
+                return
+            conversation = action.conversation_id or f"{action.platform}:{action.account_id}:public_posts"
+            event = Event(event_id,action.platform,action.account_id,action.account_id,conversation,
+                          "outgoing_message",action.text,now,action.visibility)
+            db.execute("INSERT OR IGNORE INTO events(agent_id,event_id,payload,state) VALUES(?,?,?,'done')",
+                       (self.agent_id,event_id,json.dumps(asdict(event),ensure_ascii=False)))
+            row = db.execute("SELECT state FROM events WHERE agent_id=? AND event_id=?", (self.agent_id,event_id)).fetchone()
+            if row[0] == "deleted":
+                return
+            person = action.subject_person_id if action.visibility=="private" else "agent:self"
+            db.execute("INSERT OR IGNORE INTO conversation_records VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                (self.agent_id,stable_id(self.agent_id,"outgoing",action.action_id),event_id,person,
+                 f"conversation:{action.platform}:{conversation}","private_dialogue" if action.visibility=="private" else "public_dialogue",
+                 action.platform,action.account_id,conversation,action.visibility,"agent",action.text,now))
+            return
         if not action.event_id or not action.text or action.kind in {"like","coin"}:
             return
         source = db.execute("SELECT payload,state FROM events WHERE agent_id=? AND event_id=?", (self.agent_id,action.event_id)).fetchone()

@@ -34,6 +34,7 @@ class WorkerCoordinator:
             if not runtime.store.acquire_lease("background_decision", time.time(), 1200):
                 return False
             try:
+                runtime.engine.autonomy.run(time.time())
                 if not runtime.engine.run_due_task():
                     runtime.engine.browse()
                 if runtime.artwork:
@@ -72,7 +73,7 @@ class WorkerCoordinator:
         if jobs:
             for _ in range(min(jobs,max(0, limit - len(self.messages)))):
                 self.messages.append(self.pool.submit(self.job, "message"))
-        if (self.sender is None or self.sender.done()) and state["queued_actions"]:
+        if (self.sender is None or self.sender.done()) and state.get("ready_actions", state["queued_actions"]):
             if self.sender is not None:
                 self.collect(self.sender)
             self.sender = self.pool.submit(self.job, "send")

@@ -28,6 +28,12 @@ LOG = logging.getLogger("murasame")
 
 def prepare_store(config: Config) -> SQLiteStore:
     store = SQLiteStore(config.file("database"), config.data["agent_id"])
+    autonomy_stamp = stable_id(config.data["autonomy"], config.data["bilibili"].get("private_messages_enabled",True))
+    previous = store.get_setting("autonomy_config_stamp")
+    if previous != autonomy_stamp:
+        if previous is not None:
+            store.cancel_autonomy()
+        store.set_setting("autonomy_config_stamp", autonomy_stamp)
     if config.data["mode"] == "draft":
         store.enable_review_mode()
     stamp = stable_id(config.data.get("bindings", []))
@@ -146,6 +152,7 @@ class Runtime:
                     break
             if not self.engine.run_due_task():
                 self.engine.browse()
+            self.engine.autonomy.run(time.time())
             if self.artwork:
                 self.artwork.run(time.time(), agent_id=self.engine.settings.agent_id, platform="bilibili",
                                  account_id=self.platform.account_id, timezone=self.engine.settings.timezone,
@@ -205,7 +212,8 @@ def build(config: Config, *, concurrency=None) -> Runtime:
                                pages=b["notification_pages"], max_age_hours=b["notification_max_age_hours"], proxy_url=config.network_proxy,
                                private_session_pages=b.get("private_session_pages", 3), private_message_pages=b.get("private_message_pages", 3),
                                private_max_age_hours=b.get("private_message_max_age_hours", 24),
-                               read_video_subtitles=b.get("read_video_subtitles", True), inbox_batch_limit=b.get("inbox_batch_limit", 90))
+                               read_video_subtitles=b.get("read_video_subtitles", True), inbox_batch_limit=b.get("inbox_batch_limit", 90),
+                               proactive_recipient_id=(store.binding(config.data["owner_person_id"], "bilibili") or {}).get("external_id", ""))
     m = config.data["model"]
     model = ChatCompletionsModel(base_url=m["base_url"], name=m["name"], api_key=m["api_key"], store=store,
                                  timezone=config.data["timezone"], daily_limit=m["daily_call_limit"],
@@ -234,6 +242,13 @@ def build(config: Config, *, concurrency=None) -> Runtime:
                     kaomoji_enabled=e.get("kaomoji_enabled",True)), {"bilibili": platform}, store)
     def action_policy(action: Action, now: float) -> str:
         current = Config(config.path)
+        if action.kind in {"autonomous_post", "proactive_private"}:
+            from murasamebot.application.autonomy import AutonomySettings
+            policy = AutonomySettings.from_config(current.data["autonomy"])
+            channel = "private" if action.kind == "proactive_private" else "dynamic"
+            if (not policy.enabled(channel) or policy.version() != action.autonomy_version
+                    or policy.open_at(now, current.data["timezone"]) != now):
+                return "自主发布设置已变化或不在允许时段"
         if (current.data["mode"]=="reviewed" and current.data["review"]["strategy"]!=config.data["review"]["strategy"]
                 and not action.approved_manually and action.kind not in {"like","coin"}
                 and not review_satisfied(action,current.data["review"]["strategy"])):
@@ -252,7 +267,7 @@ def build(config: Config, *, concurrency=None) -> Runtime:
                 return "对应点赞或投币功能已关闭"
             if action.proactive and not current.data["browsing"]["enabled"]:
                 return "自主浏览已关闭"
-        if action.kind == "private_reply" and not current.data["bilibili"].get("private_messages_enabled", True):
+        if action.kind in {"private_reply", "proactive_private"} and not current.data["bilibili"].get("private_messages_enabled", True):
             return "私信回复功能已关闭"
         if action.kind == "artwork_share":
             art = ArtSettings.from_config(current.data.get("artwork", {}))
@@ -283,6 +298,7 @@ def readiness(runtime: Runtime) -> dict:
     return {
         "memory": {**runtime.store.memory_status(),"health":runtime.store.get_setting("memory_health",{}),
                    "last_contexts":[row for row in runtime.store.memory_contexts()]},
+        "autonomy": {c:runtime.store.get_setting("autonomy_status:"+c) for c in ("dynamic","private")},
         "language": "Python 3.12+", "agent_id": runtime.config.data["agent_id"],
         "persona": runtime.engine.persona.name, "persona_version": runtime.engine.persona.version[:12],
         "source_changed": runtime.engine.persona.source_changed,

@@ -131,3 +131,21 @@ web:
   host: 127.0.0.1
   port: 8766
 
+
+# Autonomous initiatives; enable in the dashboard after reviewing these limits.
+autonomy:
+  dynamic_enabled: false
+  private_enabled: false
+  decision_interval_minutes: 30
+  daily_decision_limit: 8
+  max_delay_minutes: 120
+  dynamic_daily_limit: 1
+  private_daily_limit: 2
+  dynamic_gap_minutes: 360
+  private_gap_minutes: 240
+  private_idle_minutes: 60
+  max_post_characters: 300
+  windows:
+    - {start: '09:00', end: '22:00'}
+  weekdays: [0, 1, 2, 3, 4, 5, 6]
+  topics: ['游戏与创作', '生活中的小想法']

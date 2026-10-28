@@ -347,7 +347,7 @@ class SQLiteStore(SQLiteMemory):
     def enqueue_action(self, action, *, draft, now):
         with self.transaction() as db:
             content_key = action.content.key if action.content else f"{action.platform}:conversation:{action.conversation_id}"
-            if action.kind not in {"reply", "private_reply"}:
+            if action.kind not in {"reply", "private_reply", "autonomous_post", "proactive_private"}:
                 if action.kind == "browse_reply":
                     exists = db.execute("SELECT 1 FROM actions WHERE agent_id=? AND dedup_key=? AND (state IN ('accepted','unknown','sending','reviewing') OR (state IN ('draft','queued') AND expires_at>?))", (self.agent_id, action.dedup_key, now)).fetchone()
                     if exists:
@@ -384,6 +384,20 @@ class SQLiteStore(SQLiteMemory):
                     source.reply_to != action.reply_to or source.sequence != action.source_sequence or
                     action.content is not None or action.mentions):
                 return "private_route_mismatch"
+        if action.kind in {"autonomous_post", "proactive_private"}:
+            import math
+            if (not action.autonomy_version or type(action.not_before) not in {int, float}
+                    or not math.isfinite(action.not_before) or action.not_before < action.created_at
+                    or action.not_before >= action.expires_at or action.content or action.event_id or action.mentions):
+                return "invalid_autonomous_action"
+            if action.kind == "autonomous_post" and (action.visibility != "public" or action.recipient_id or action.subject_person_id):
+                return "invalid_autonomous_post_route"
+            if action.kind == "proactive_private":
+                target = db.execute("SELECT external_id FROM bindings WHERE agent_id=? AND person_id=? AND platform=? AND active=1",
+                                    (self.agent_id, action.subject_person_id, action.platform)).fetchone()
+                if (not target or target[0] != action.recipient_id or action.visibility != "private"
+                        or not action.conversation_id or action.reply_to or action.source_sequence):
+                    return "invalid_proactive_private_route"
         for person in set(action.mentions) | ({action.subject_person_id} if action.subject_person_id else set()):
             binding = db.execute("SELECT version,purpose FROM bindings WHERE agent_id=? AND person_id=? AND platform=? AND active=1", (self.agent_id, person, action.platform)).fetchone()
             if not binding or binding[0] != action.binding_version or binding[1] != "owner_video_recommendation":
@@ -398,7 +412,7 @@ class SQLiteStore(SQLiteMemory):
         with self.connection() as db:
             return self._validate_action(db, action, now)
 
-    def claim_action(self, now, daily_limit, daily_recommendations, day_start, min_gap, recommendation_gap, allow_proactive=True, manual_only=False, require_review=False, required_review_method=""):
+    def claim_action(self, now, daily_limit, daily_recommendations, day_start, min_gap, recommendation_gap, allow_proactive=True, manual_only=False, require_review=False, required_review_method="", autonomous_kinds=()):
         with self.transaction() as db:
             # A crashed write may have reached the platform. Never requeue it.
             stale = db.execute("SELECT action_id,payload FROM actions WHERE agent_id=? AND state='sending' AND lease_until<?", (self.agent_id, now)).fetchall()
@@ -420,6 +434,10 @@ class SQLiteStore(SQLiteMemory):
             rows = db.execute(f"SELECT rowid AS queue_order,payload,kind,{self._action_ordering_key('actions')} AS ordering_key FROM actions WHERE agent_id=? AND state='queued' ORDER BY CASE kind WHEN 'reply' THEN 0 WHEN 'private_reply' THEN 0 WHEN 'recommendation' THEN 1 ELSE 2 END,created_at", (self.agent_id,)).fetchall()
             for row in rows:
                 action = Action.from_dict(json.loads(row["payload"]))
+                if action.not_before > now:
+                    continue
+                if action.kind in {"autonomous_post", "proactive_private"} and action.kind not in autonomous_kinds:
+                    continue
                 paused = db.execute("SELECT value FROM settings WHERE agent_id=? AND key=?", (self.agent_id, f"platform_paused:{action.platform}")).fetchone()
                 if paused and json.loads(paused[0]):
                     continue
@@ -429,7 +447,7 @@ class SQLiteStore(SQLiteMemory):
                     continue
                 if action.conversation_id and db.execute(f"SELECT 1 FROM actions earlier WHERE agent_id=? AND rowid<? AND state IN ('queued','reviewing') AND {self._action_ordering_key('earlier')}=?", (self.agent_id, row["queue_order"], row["ordering_key"])).fetchone():
                     continue
-                if not allow_proactive and (action.proactive or action.kind in {"recommendation", "browse_comment", "browse_reply"}):
+                if not allow_proactive and action.kind not in {"autonomous_post", "proactive_private"} and (action.proactive or action.kind in {"recommendation", "browse_comment", "browse_reply"}):
                     continue
                 reason = self._validate_action(db, action, now)
                 if reason:
@@ -443,6 +461,45 @@ class SQLiteStore(SQLiteMemory):
                 db.execute("UPDATE actions SET state='sending',sent_at=?,lease_until=? WHERE agent_id=? AND action_id=?", (now, now + 180, self.agent_id, action.action_id))
                 return action
         return None
+
+    def autonomy_snapshot(self, kind, now, start, exclude=""):
+        with self.connection() as db:
+            row = db.execute("""SELECT COUNT(CASE WHEN created_at>=? THEN 1 END) AS created_today,
+                MAX(created_at) AS last_created,
+                COUNT(CASE WHEN state IN ('accepted','unknown','sending') AND sent_at>=? THEN 1 END) AS sent_today,
+                MAX(CASE WHEN state IN ('accepted','unknown','sending') THEN sent_at END) AS last_sent,
+                COUNT(CASE WHEN state IN ('sending','unknown') OR (state IN ('draft','queued','reviewing') AND expires_at>?) THEN 1 END) AS pending
+                FROM actions WHERE agent_id=? AND kind=? AND action_id!=?""", (start,start,now,self.agent_id,kind,exclude)).fetchone()
+            return dict(row)
+
+    def autonomy_text_exists(self, kind, text):
+        with self.connection() as db:
+            return bool(db.execute("SELECT 1 FROM actions WHERE agent_id=? AND kind=? AND json_extract(payload,'$.text')=? AND state NOT IN ('failed','cancelled','expired') LIMIT 1", (self.agent_id,kind,text)).fetchone())
+
+    def autonomy_recent_public(self):
+        with self.connection() as db:
+            rows = db.execute("SELECT action_id,payload,sent_at FROM actions WHERE agent_id=? AND state='accepted' AND json_extract(payload,'$.visibility')='public' AND kind NOT IN ('like','coin') ORDER BY sent_at DESC LIMIT 30", (self.agent_id,)).fetchall()
+            result = []
+            for row in rows:
+                action = json.loads(row["payload"])
+                source = action.get("event_id") or (stable_id(self.agent_id,"outgoing-source",row["action_id"]) if action["kind"]=="autonomous_post" else "")
+                if source and (db.execute("SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?", (self.agent_id,source)).fetchone()
+                        or db.execute("SELECT 1 FROM events WHERE agent_id=? AND event_id=? AND state='deleted'", (self.agent_id,source)).fetchone()):
+                    continue
+                result.append({"text": action["text"][:500], "at": row["sent_at"]})
+                if len(result)==6:
+                    break
+            return result
+
+    def private_activity(self, conversation):
+        with self.connection() as db:
+            row = db.execute("SELECT MAX(json_extract(payload,'$.occurred_at')) AS last_at,COUNT(CASE WHEN state IN ('pending','processing') THEN 1 END) AS pending FROM events WHERE agent_id=? AND state!='deleted' AND json_extract(payload,'$.visibility')='private' AND json_extract(payload,'$.conversation_id')=?", (self.agent_id,conversation)).fetchone()
+            sent = db.execute("SELECT MAX(sent_at) FROM actions WHERE agent_id=? AND state='accepted' AND json_extract(payload,'$.visibility')='private' AND json_extract(payload,'$.conversation_id')=?", (self.agent_id,conversation)).fetchone()[0]
+            return {"last_at": max(row["last_at"] or 0, sent or 0), "pending": row["pending"]}
+
+    def cancel_autonomy(self):
+        with self.transaction() as db:
+            db.execute("UPDATE actions SET state='cancelled',receipt=? WHERE agent_id=? AND kind IN ('autonomous_post','proactive_private') AND state IN ('draft','queued','reviewing')", (dumps({"detail":"自主发布配置已变化，旧计划已取消"}),self.agent_id))
 
     def finish_action(self, action_id, receipt, now):
         if receipt.state not in ("accepted", "failed", "unknown"):
@@ -620,6 +677,7 @@ class SQLiteStore(SQLiteMemory):
         with self.connection() as db:
             events = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM events WHERE agent_id=? GROUP BY state", (self.agent_id,))}
             actions = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM actions WHERE agent_id=? GROUP BY state", (self.agent_id,))}
+            ready_actions = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND COALESCE(json_extract(payload,'$.not_before'),0)<=?", (self.agent_id,now)).fetchone()[0]
             reviews = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND (COALESCE(json_extract(payload,'$.review_state'),'')!='passed' OR (?='independent' AND json_extract(payload,'$.review_method')='inline'))", (self.agent_id,review_strategy)).fetchone()[0]
             pending = db.execute(f"SELECT state,next_at,{self._event_ordering_key('events')} AS ordering_key,"
                                  "EXISTS(SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') AS paused "
@@ -643,7 +701,7 @@ class SQLiteStore(SQLiteMemory):
         return {"pending_events": events.get("pending", 0), "processing_events": events.get("processing", 0),
                 "ready_events": ready, "retry_wait_events": retry, "blocked_events": blocked, "paused_events": paused,
                 "failed_events": events.get("failed",0), "next_retry_at": next_retry,
-                "reviewing_actions": actions.get("reviewing", 0), "queued_actions": actions.get("queued", 0), "draft_actions": actions.get("draft", 0), "review_ready_actions": reviews}
+                "reviewing_actions": actions.get("reviewing", 0), "queued_actions": actions.get("queued", 0), "ready_actions": ready_actions, "draft_actions": actions.get("draft", 0), "review_ready_actions": reviews}
 
     def reserve_model_call(self, day, limit):
         with self.transaction() as db:

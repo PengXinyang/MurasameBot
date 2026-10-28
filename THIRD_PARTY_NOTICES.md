@@ -13,6 +13,8 @@ The supplied character/settings.yml and original artwork are user-provided asset
 
 Additional protocol references checked on 2026-10-26 (no implementation source copied):
 
+- https://github.com/bilibili-plugins/bilibili-api-collect/blob/master/docs/comment/list.md — rechecked 2026-10-28 for reply/reply pagination and reply/dialog/cursor schemas; bounded parent-chain traversal was implemented independently. The deprecated reply/info endpoint is not used.
+
 - https://github.com/BACNext/bilibili-API-collect-backup/blob/master/docs/message/private_msg.md — private session/history schemas and WBI-signed web text message fields. No implementation code copied.
 - https://github.com/BACNext/bilibili-API-collect-backup/blob/master/docs/user/relation.md — authenticated relationship query and mutual-follow attribute semantics.
 - https://github.com/BACNext/bilibili-API-collect-backup/blob/master/docs/video/action.md — video like and coin request/state fields.
@@ -32,12 +34,16 @@ Additional protocol references checked on 2026-10-26 (no implementation source c
 
 Selected supplied character PNGs are used only as local dashboard decoration and remain unmodified. Scheduled third-party illustration sharing is a later, separate user-requested feature: artwork licenses are not inherited from source repositories, API access, discovery, or attribution. Image reposts require operator-configured permission and preserve artist/source attribution.
 
+On 2026-10-28 the user additionally supplied two JPEG illustrations and one transparent PNG for dashboard decoration. They are preserved byte-for-byte as `character/avatar/dashboard-smile.jpg`, `dashboard-letter.jpg` and `dashboard-kimono.png`. Layout fitting uses CSS only; embedded image markings remain in the original files. These supplied artworks are not relicensed as program source.
+
 Runtime dependencies retain their own licenses: HTTPX with socksio, PyYAML, tzdata, Pillow, and optional qrcode. pytest is a development dependency. This project does not depend on the archived bilibili-api-python package. The existence of an endpoint implementation or third-party license does not establish platform authorization.
 
 Memory design reference checked on 2026-10-27:
 
 - https://github.com/chenkezhen480/dsh-world — root MIT, examined at commit `402a211ea92cd675d8775ec1346f12d490b4fa34` (README version 0.5.3). Architectural reference for durable archive/checkpoints, recent history, context compaction, daily reflection and versioned self-description. The Python implementation here was written independently; no TypeScript implementation source, templates or runtime dependencies were copied. The repository's Windows WeChat native engine has a separate noncommercial license and is not included or used.
 
+
+Autonomous initiative references checked on 2026-10-28: `chenkezhen480/dsh-world` (README 0.6.0 and life alarm/notification modules), `YOYOLnFu/dsh-bili-pond` (bounded cadence, fixed-recipient messaging and result accounting), and `kdcadmin/dsh_douyin_tools` (public README describing video-creation/publication workflows). These were architectural references only. No DSH runtime, TypeScript implementation, browser automation engine or native messaging bridge was copied or installed; this release implements its own Python text-post and owner-message service.
 
 ## bili-cli MIT notice
 

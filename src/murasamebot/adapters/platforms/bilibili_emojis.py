@@ -36,7 +36,7 @@ class BilibiliEmojiMixin:
             return None
         if len(action.emojis) > 2:
             return Receipt("failed", detail="每条消息最多使用 2 个表情")
-        channel = "private" if action.visibility == "private" else "dynamic" if action.kind in {"owner_repost", "artwork_share"} else "public"
+        channel = "private" if action.visibility == "private" else "dynamic" if action.kind in {"owner_repost", "artwork_share", "autonomous_post"} else "public"
         allowed = {e.key:e for e in KAOMOJIS}
         if any(e.kind!="kaomoji" for e in action.emojis):
             allowed.update({e.key:e for e in self.emoji_options(action.account_id, channel)})
