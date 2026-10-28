@@ -44,7 +44,8 @@ class SocialEngine:
                  action_policy: Callable[[Action, float], str] | None = None,
                  private_access: Mapping[str, PrivateMessageAccess] | None = None,
                  vision: VisionService | None = None, expressions: ExpressionService | None = None,
-                 memory: MemoryService | None = None):
+                 memory: MemoryService | None = None, owner_activity=None):
+        self.owner_activity = owner_activity
         self.settings, self.store, self.model, self.persona = settings, store, model, persona
         self.providers, self.sinks = dict(providers), dict(sinks)
         self.action_policy = action_policy or (lambda action, now: "")
@@ -70,6 +71,8 @@ class SocialEngine:
         return text + "".join(e.token for e in emojis), emojis
 
     def enqueue_generated(self, action, result, now):
+        if action.owner_activity_version and (not self.owner_activity or self.owner_activity.guard(action,now)):
+            return False
         draft = self.settings.draft
         if self.settings.model_review and self.settings.review_strategy=="inline":
             action,needs_human = inline_review(action,result)
@@ -260,6 +263,8 @@ class SocialEngine:
                 self.store.set_setting(checkpoint, intent)
         scope = f"conversation:{event.platform}:{event.conversation_id}"
         context = self.memory_service.context(event,person,owner,now)
+        if owner and self.owner_activity:
+            context.update(self.owner_activity.private_context(person,now))
         result, options = self.message_decision("private_chat", {
             "persona": self.persona.prompt(owner, private=True), "message": event.text,
             "owner_addressed": owner, **context,
@@ -283,7 +288,7 @@ class SocialEngine:
                         source_sequence=event.sequence, evidence_level="conversation", dedup_key=event.event_id,
                         subject_person_id=person if owner else "", binding_version=binding["version"] if binding else 0,
                         decision_reason="互关私信：结合当前消息与同会话上下文自然接话", emojis=emojis,
-                        memory_epoch=result["_memory_epoch"])
+                        memory_epoch=result["_memory_epoch"], owner_activity_version=context.get("owner_activity_version",""))
         self.enqueue_generated(action,result,now)
 
     def _reply(self, event: Event, person: str | None, now: float) -> None:
@@ -474,7 +479,7 @@ class SocialEngine:
             self.store.release_lease("browse")
         return count
 
-    def _evaluate(self, document: Document, now: float, task: dict | None = None) -> bool:
+    def _evaluate(self, document: Document, now: float, task: dict | None = None, *, owner_observation=None) -> bool:
         binding = self.store.binding(self.settings.owner_person_id, document.ref.provider)
         # This payload is deliberately independent of the original private message.
         readable = replace(document, comments=tuple(c for c in document.comments if c.get("author_id") != self.settings.account_id))
@@ -482,9 +487,10 @@ class SocialEngine:
             "persona": self.persona.prompt(), "content": readable.public_context(),
             "interests": list(self.settings.interests), "owner_interests": list(self.settings.owner_interests),
             "owner_preferences": [row for row in self.store.memory(self.settings.owner_person_id, "person", "owner_video_recommendation", now) if row["kind"] == "preference"],
-            "requested_topic": task["topic"] if task else None,
+            "requested_topic": task["topic"] if task else owner_observation["topic"] if owner_observation else None,
+            **({"memory_epoch":owner_observation["memory_epoch"]} if owner_observation else {}),
             "max_characters": self.settings.max_recommendation_characters if task else self.settings.max_comment_characters,
-            "comment_videos": self.settings.comment_videos, "reply_comments": self.settings.reply_comments and task is None,
+            "comment_videos": self.settings.comment_videos and not owner_observation, "reply_comments": self.settings.reply_comments and task is None and not owner_observation,
             "recommend_owner": self.settings.recommend_owner,
         }, document.ref.provider, self.settings.account_id, "public", now)
         decision = result.get("decision", "skip")
@@ -492,9 +498,12 @@ class SocialEngine:
             raise PolicyError("视频行为选择无效")
         reason = str(result.get("reason", ""))[:200]
         self.store.record_view(document.ref, reason or decision, now)
-        self._queue_reactions(document, now, result.get("interested") is True)
+        if owner_observation and decision not in {"recommend","skip"}:
+            return False
+        if not owner_observation:
+            self._queue_reactions(document, now, result.get("interested") is True)
         extra = result.get("comment_reply")
-        if task is None and decision != "reply" and self.settings.reply_comments and isinstance(extra, dict) and extra.get("reply_to"):
+        if not owner_observation and task is None and decision != "reply" and self.settings.reply_comments and isinstance(extra, dict) and extra.get("reply_to"):
             try:
                 self._queue_browse_reply(readable, extra, options, now)
             except PolicyError:
@@ -524,7 +533,11 @@ class SocialEngine:
             event_id=task["event_id"] if task else "", binding_version=binding["version"] if decision == "recommend" else 0,
             evidence_level=document.evidence_level, decision_reason=reason, dedup_key=f"proactive:{document.ref.key}",
             emojis=emojis, proactive=True,
+            owner_activity_version=owner_observation["version"] if owner_observation else "",
+            memory_epoch=result["_memory_epoch"] if owner_observation else -1,
         )
+        if owner_observation and self.owner_activity and self.owner_activity.guard(action,now):
+            return False
         return self.enqueue_generated(action,result,now)
 
     def _queue_browse_reply(self, document, result, options, now):
@@ -637,6 +650,8 @@ class SocialEngine:
                 "persona": self.persona.prompt(owner, private=action.visibility == "private"), "proposed_text": action.text,
                 "channel": "private" if action.visibility == "private" else "public", "action_kind": action.kind,
                 "owner_addressed": owner, "source_message": event.text if event else None,
+                "owner_activity": (self.owner_activity.private_context(action.subject_person_id,now).get("owner_activity")
+                                   if action.visibility == "private" and action.owner_activity_version and self.owner_activity else None),
                 "content": document.public_context() if document else None,
                 "evidence_level": action.evidence_level,
                 "emojis": [{"key": e.key, "token": e.token, "meaning": e.label, "kind":e.kind} for e in action.emojis],

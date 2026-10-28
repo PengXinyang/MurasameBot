@@ -15,14 +15,17 @@ LOG = logging.getLogger("murasame")
 class WorkerCoordinator:
     def __init__(self, config_path: Path, *, runtime_builder=build):
         self.path, self.build = config_path, runtime_builder
-        self.pool = ThreadPoolExecutor(max_workers=34, thread_name_prefix="murasame")
+        self.pool = ThreadPoolExecutor(max_workers=35, thread_name_prefix="murasame")
         self.model_limit = ModelConcurrency(4)
         self.messages, self.background, self.sender, self.memory = [], None, None, None
+        self.observer = None
 
     def job(self, kind):
         config = Config(self.path)
         runtime = self.build(config, concurrency=self.model_limit)
         try:
+            if kind == "observation":
+                return runtime.owner_history.sync(time.time())
             if kind == "memory":
                 return runtime.engine.memory_service.maintain()
             if kind == "message":
@@ -34,6 +37,8 @@ class WorkerCoordinator:
             if not runtime.store.acquire_lease("background_decision", time.time(), 1200):
                 return False
             try:
+                if getattr(runtime,"owner_history",None):
+                    runtime.owner_history.recommend(runtime.engine,time.time())
                 runtime.engine.autonomy.run(time.time())
                 if not runtime.engine.run_due_task():
                     runtime.engine.browse()
@@ -66,6 +71,13 @@ class WorkerCoordinator:
                 remaining.append(future)
         self.messages = remaining
         store = prepare_store(config)
+        if self.observer is not None and self.observer.done():
+            self.collect(self.observer)
+            self.observer = None
+        observation = store.owner_history_state(config.data["owner_person_id"])
+        if (self.observer is None and config.data["owner_history"]["enabled"] and
+                time.time()-observation.get("last_attempt",0)>=config.data["owner_history"]["poll_seconds"]):
+            self.observer = self.pool.submit(self.job,"observation")
         store.recover_idle_work(time.time())
         state = store.queue_status(review_strategy=config.data.get("review",{}).get("strategy","inline"))
         ready = state.get("ready_events",state["pending_events"])

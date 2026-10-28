@@ -201,6 +201,7 @@ class Action:
     memory_epoch: int = -1  # recheck derived-memory invalidation immediately before dispatch
     not_before: float = 0  # Persisted earliest delivery time; never a sleeping worker.
     autonomy_version: str = ""
+    owner_activity_version: str = ""  # Private observation authorization snapshot.
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

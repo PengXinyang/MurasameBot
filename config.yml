@@ -1,4 +1,17 @@
 agent_id: murasame
+owner_history:
+  enabled: false  # enabled after owner QR login; never reuse AI credentials
+  poll_seconds: 300
+  pages: 3
+  retention_days: 7
+  window_minutes: 120
+  context_limit: 12
+  use_for_private: true
+  playful_jealousy: false
+  recommendations_enabled: false
+  recommendation_topics: [galgame, 千恋万花]
+  recommendation_daily_limit: 1
+  recommendation_gap_minutes: 360
 owner_person_id: owner
 database: data/murasame.sqlite3
 character_source: character/settings.yml

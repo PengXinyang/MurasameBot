@@ -13,6 +13,8 @@ The supplied character/settings.yml and original artwork are user-provided asset
 
 Additional protocol references checked on 2026-10-26 (no implementation source copied):
 
+- https://github.com/BACNext/bilibili-API-collect-backup/blob/master/docs/historytoview/history.md — rechecked 2026-10-28 for authenticated history/cursor, cursor pagination, view_at, progress and video metadata. The owner read-only client and observation workflow were implemented independently; this is a community protocol reference, not an official supported API contract.
+
 - https://github.com/bilibili-plugins/bilibili-api-collect/blob/master/docs/comment/list.md — rechecked 2026-10-28 for reply/reply pagination and reply/dialog/cursor schemas; bounded parent-chain traversal was implemented independently. The deprecated reply/info endpoint is not used.
 
 - https://github.com/BACNext/bilibili-API-collect-backup/blob/master/docs/message/private_msg.md — private session/history schemas and WBI-signed web text message fields. No implementation code copied.

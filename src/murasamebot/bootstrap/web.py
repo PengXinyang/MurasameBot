@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.runtime import build, prepare_store, readiness
+from murasamebot.bootstrap.owner_history import OwnerLoginManager, history_status, history_source, history_service
 from murasamebot.domain.models import PlatformError
 
 
@@ -36,6 +37,7 @@ def admin_token(root: Path) -> str:
 
 
 def handler_for(config_path: Path, token: str):
+    owner_login = OwnerLoginManager()
     class Handler(BaseHTTPRequestHandler):
         def handle(self):
             try:
@@ -61,7 +63,7 @@ def handler_for(config_path: Path, token: str):
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Referrer-Policy", "no-referrer")
-                self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+                self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
                 self.end_headers()
                 self.wfile.write(body)
                 return True
@@ -83,12 +85,14 @@ def handler_for(config_path: Path, token: str):
 
         def do_GET(self):
             path = urlparse(self.path).path
-            if path == "/assets/dashboard.css" or path in CHARACTER_ASSETS:
+            if path in {"/assets/dashboard.css","/assets/owner-history.js"} or path in CHARACTER_ASSETS:
                 if self.headers.get("Host", "").split(":")[0] not in {"127.0.0.1", "localhost"}:
                     self.response(401, {"error": "仅限本机访问"})
                     return
                 try:
-                    if path == "/assets/dashboard.css":
+                    if path == "/assets/owner-history.js":
+                        self.response(200,Path(__file__).with_name("owner-history.js").read_bytes(),content_type="text/javascript; charset=utf-8")
+                    elif path == "/assets/dashboard.css":
                         asset = Path(__file__).with_name("dashboard.css")
                         self.response(200, asset.read_bytes(), content_type="text/css; charset=utf-8")
                     else:
@@ -115,6 +119,10 @@ def handler_for(config_path: Path, token: str):
                 config = Config(config_path)
                 if path == "/api/config":
                     self.response(200, config.public())
+                elif path == "/api/owner-history":
+                    self.response(200, history_status(config,prepare_store(config)))
+                elif path == "/api/owner-history/qr":
+                    self.response(200, owner_login.image(),content_type="image/png")
                 elif path == "/api/status":
                     runtime = build(config)
                     try:
@@ -128,7 +136,7 @@ def handler_for(config_path: Path, token: str):
                     self.response(200, prepare_store(config).inspect(table))
                 else:
                     self.response(404, {"error": "不存在的接口"})
-            except (ValueError, OSError, KeyError) as exc:
+            except (ValueError, OSError, KeyError, PlatformError) as exc:
                 self.response(400, {"error": str(exc)})
             except sqlite3.Error:
                 self.response(503, {"error": "本地数据暂忙，请稍后刷新"})
@@ -156,7 +164,25 @@ def handler_for(config_path: Path, token: str):
                 config = Config(config_path)
                 store = prepare_store(config)
                 path = urlparse(self.path).path
-                if path == "/api/config":
+                if path == "/api/owner-history/login/start":
+                    self.response(200,owner_login.start(config,store))
+                    return
+                elif path == "/api/owner-history/login/poll":
+                    self.response(200,owner_login.poll(config,store))
+                    return
+                elif path == "/api/owner-history/revoke":
+                    owner_login.revoke(config,store)
+                elif path == "/api/owner-history/clear":
+                    store.owner_history_reset(config.data["owner_person_id"],time.time())
+                elif path == "/api/owner-history/sync":
+                    source = history_source(config)
+                    try:
+                        history_service(config,store,source).sync(time.time(),force=True)
+                        self.response(200,history_status(config,store))
+                        return
+                    finally:
+                        source.close()
+                elif path == "/api/config":
                     config.save_local(data)
                     if "paused" in data:
                         store.set_setting("paused", bool(data["paused"]))

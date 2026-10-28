@@ -185,7 +185,8 @@ def test_runtime_wires_policy_into_platform_text_vision_and_artwork_clients(tmp_
         clients = [runtime.platform.client, runtime.model.client]
         clients += [resource.client for resource in runtime.resources]
         clients += [source.client for source in runtime.artwork.sources.values()]
-        assert len(clients) == 6
+        assert len(clients) == 7  # Separate GET-only owner-history client.
+        assert runtime.owner_history.source.client is not runtime.platform.client
         assert all(isinstance(c._transport, RoutingTransport) and c._transport.policy.mode == "gfwlist" for c in clients)
     finally:
         runtime.close()

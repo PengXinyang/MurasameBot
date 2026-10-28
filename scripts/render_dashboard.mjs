@@ -26,7 +26,7 @@ try{
   await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1260,deviceScaleFactor:1,mobile:false});
   await call('Page.navigate',{url:plan.url});
-  await until(()=>evaluate("!!document.querySelector('#limit-daily_comments')&&document.querySelector('#model-state')?.textContent!=='读取中'&&[...document.images].every(image=>image.complete&&image.naturalWidth>0)"));
+  await until(()=>evaluate("!!document.querySelector('#limit-daily_comments')&&document.querySelector('#model-state')?.textContent!=='读取中'&&[...document.images].filter(image=>image.hasAttribute('src')).every(image=>image.complete&&image.naturalWidth>0)"));
   for(const screen of plan.screens){
     await call('Emulation.setDeviceMetricsOverride',{width:screen.width,height:screen.height,deviceScaleFactor:1,mobile:screen.width<620});
     await evaluate(`chooseTab(${JSON.stringify(screen.tab)});chooseSettingsGroup(${JSON.stringify(screen.group||'browsing')});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
@@ -37,7 +37,7 @@ try{
       if(grouped.selected!==screen.group||JSON.stringify(grouped.ids.sort())!==JSON.stringify(expected.sort()))throw Error('Action category lost or mixed records: '+JSON.stringify(grouped));
       if(screen.group!=='reactions'&&!await evaluate("document.querySelector('#actionlist').textContent.includes('计划时间')"))throw Error('Scheduled initiative time was not shown');
     }
-    const metrics=await evaluate("({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,controls:document.querySelectorAll('#settings input,#settings select,#settings textarea').length,missingArt:[...document.images].filter(image=>!image.naturalWidth).length})");
+    const metrics=await evaluate("({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,controls:document.querySelectorAll('#settings input,#settings select,#settings textarea').length,missingArt:[...document.images].filter(image=>image.hasAttribute('src')&&!image.naturalWidth).length})");
     if(metrics.scrollWidth>metrics.width)throw Error('Horizontal page overflow: '+screen.tab+' '+screen.width+' '+JSON.stringify(metrics));
     const screenshot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
     await writeFile(screen.output,Buffer.from(screenshot.data,'base64'));
@@ -80,6 +80,12 @@ try{
   if(!await evaluate("memoryResults.length===1&&document.querySelector('#memory-search-results').textContent.includes('今天有点累')"))throw Error('Memory search did not render scoped originals');
   report.memory_settings_save_roundtrip=true;
   report.memory_source_search=true;
+  await until(()=>evaluate("document.querySelector('[data-history=poll_seconds]')?.value==='300'"));
+  if(!await evaluate("document.querySelector('#owner-history-state').textContent.includes('等待扫码')&&document.querySelectorAll('[data-history]').length===12"))throw Error('Owner history controls did not load');
+  await evaluate("(async()=>{document.querySelector('[data-history=poll_seconds]').value='180';document.querySelector('[data-history=recommendation_topics]').value='galgame\\n千恋万花';await document.querySelector('#owner-history-save').onclick()})()");
+  if(!await evaluate("(async()=>{const c=await api('config');return c.owner_history.poll_seconds===180&&c.owner_history.recommendation_topics.length===2&&!c.owner_history.enabled&&!c.owner_history.recommendations_enabled})()"))throw Error('Owner history settings round-trip failed');
+  await evaluate("(async()=>{document.querySelector('[data-history=poll_seconds]').value='300';await document.querySelector('#owner-history-save').onclick()})()");
+  report.owner_history={controls:12,settings_save_roundtrip:true,collection_default_off:true,recommendations_default_off:true};
   if(report.errors.length)throw Error('Browser reported JavaScript exceptions');
   await writeFile(plan.report,JSON.stringify(report,null,2));
 }finally{

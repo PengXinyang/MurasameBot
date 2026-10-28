@@ -73,6 +73,10 @@ class AutonomyService:
         if snapshot["last_sent"] and now - snapshot["last_sent"] < getattr(s, channel + "_gap_minutes") * 60:
             return "尚未到自主发布冷却时间"
         if channel == "private":
+            if e.owner_activity:
+                reason = e.owner_activity.guard(action, now)
+                if reason:
+                    return reason
             if not e.settings.private_messages_enabled:
                 return "私信功能已关闭"
             if action.subject_person_id != e.settings.owner_person_id:
@@ -129,6 +133,8 @@ class AutonomyService:
                         probe = Event(stable_id("context", now), e.settings.platform, e.settings.account_id,
                                       binding["external_id"], conversation, "context_probe", "", now, "private")
                         context = e.memory_service.context(probe, e.settings.owner_person_id, True, now)
+                        if e.owner_activity:
+                            context.update(e.owner_activity.private_context(e.settings.owner_person_id, now))
                     today = datetime.fromtimestamp(now, ZoneInfo(e.settings.timezone)).date().isoformat()
                     budget_key = "autonomy_decisions:" + today
                     used = e.store.get_setting(budget_key, 0)
@@ -167,7 +173,11 @@ class AutonomyService:
                         visibility="private" if channel == "private" else "public", conversation_id=conversation,
                         recipient_id=binding["external_id"] if binding else "",
                         subject_person_id=e.settings.owner_person_id if binding else "", binding_version=binding["version"] if binding else 0,
-                        decision_reason="自主择时私信" if channel == "private" else "自主文字动态", memory_epoch=result["_memory_epoch"])
+                        decision_reason="自主择时私信" if channel == "private" else "自主文字动态", memory_epoch=result["_memory_epoch"],
+                        owner_activity_version=context.get("owner_activity_version", ""))
+                    if e.owner_activity and e.owner_activity.guard(action,now):
+                        status["state"] = "invalidated"
+                        continue
                     inserted = e.enqueue_generated(action, result, now)
                     changed = inserted or changed
                     status.update(state="planned" if inserted else "invalidated")

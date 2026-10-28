@@ -20,6 +20,7 @@ from murasamebot.application.expressions import ExpressionService, ExpressionSet
 from murasamebot.application.memory import MemoryService, MemorySettings
 from murasamebot.application.review import review_satisfied
 from murasamebot.bootstrap.config import Config
+from murasamebot.bootstrap.owner_history import history_source, history_service
 from murasamebot.domain.models import Action, PlatformError, stable_id
 
 
@@ -28,6 +29,7 @@ LOG = logging.getLogger("murasame")
 
 def prepare_store(config: Config) -> SQLiteStore:
     store = SQLiteStore(config.file("database"), config.data["agent_id"])
+    store.owner_history_prune(config.data["owner_person_id"],time.time(),config.data["owner_history"]["retention_days"])
     autonomy_stamp = stable_id(config.data["autonomy"], config.data["bilibili"].get("private_messages_enabled",True))
     previous = store.get_setting("autonomy_config_stamp")
     if previous != autonomy_stamp:
@@ -66,6 +68,7 @@ class Runtime:
     engine: SocialEngine
     artwork: ArtDiscovery | None = None
     resources: tuple = ()
+    owner_history: object = None
 
     def record_inbox_warnings(self, channel: str, now: float):
         warnings = getattr(self.platform, "take_warnings", lambda: [])()
@@ -152,6 +155,9 @@ class Runtime:
                     break
             if not self.engine.run_due_task():
                 self.engine.browse()
+            if self.owner_history:
+                self.owner_history.sync(time.time())
+                self.owner_history.recommend(self.engine,time.time())
             self.engine.autonomy.run(time.time())
             if self.artwork:
                 self.artwork.run(time.time(), agent_id=self.engine.settings.agent_id, platform="bilibili",
@@ -207,6 +213,8 @@ class Runtime:
 
 def build(config: Config, *, concurrency=None) -> Runtime:
     store = prepare_store(config)
+    history_reader = history_source(config)
+    history = history_service(config,store,history_reader)
     b = config.data["bilibili"]
     platform = BilibiliAdapter((config.root / b["credentials"]).resolve(), expected_uid=str(b.get("robot_uid", "")),
                                pages=b["notification_pages"], max_age_hours=b["notification_max_age_hours"], proxy_url=config.network_proxy,
@@ -225,7 +233,7 @@ def build(config: Config, *, concurrency=None) -> Runtime:
     v = config.data.get("vision", {})
     vision_settings = VisionSettings(**{key: v[key] for key in VisionSettings.__dataclass_fields__ if key in v})
     reader = HTTPImageReader(hosts=tuple(v.get("allowed_image_hosts", ["i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com"])), proxy_url=config.network_proxy)
-    resources = [reader]
+    resources = [reader, history_reader]
     vision_model = model
     if v.get("base_url") or v.get("name") or v.get("api_key"):
         base = v.get("base_url") or m["base_url"]
@@ -242,6 +250,10 @@ def build(config: Config, *, concurrency=None) -> Runtime:
                     kaomoji_enabled=e.get("kaomoji_enabled",True)), {"bilibili": platform}, store)
     def action_policy(action: Action, now: float) -> str:
         current = Config(config.path)
+        if action.owner_activity_version:
+            reason = history_service(current,store,history_reader).guard(action,now)
+            if reason:
+                return reason
         if action.kind in {"autonomous_post", "proactive_private"}:
             from murasamebot.application.autonomy import AutonomySettings
             policy = AutonomySettings.from_config(current.data["autonomy"])
@@ -284,14 +296,14 @@ def build(config: Config, *, concurrency=None) -> Runtime:
         return ""
     engine = SocialEngine(config.behaviour(platform.account_id), store, model, persona,
                            {"bilibili": platform}, {"bilibili": platform}, action_policy=action_policy,
-                           private_access={"bilibili": platform}, vision=vision, expressions=expressions,
+                           private_access={"bilibili": platform}, vision=vision, expressions=expressions, owner_activity=history,
                            memory=MemoryService(store,model,MemorySettings(**config.data.get("memory",{})),timezone=config.data["timezone"]))
     a = config.data.get("artwork", {})
     sources = {}
     for source in a.get("sources", []):
         sources[source] = PixivSource(a.get("pixiv_session", ""), proxy_url=config.network_proxy) if source == "pixiv" else XSource(a.get("x_bearer_token", ""), proxy_url=config.network_proxy)
     artwork = ArtDiscovery(ArtSettings.from_config(a), sources, store, model, persona)
-    return Runtime(config, store, platform, model, engine, artwork, tuple(resources))
+    return Runtime(config, store, platform, model, engine, artwork, tuple(resources), history)
 
 
 def readiness(runtime: Runtime) -> dict:

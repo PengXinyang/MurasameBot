@@ -20,7 +20,7 @@ murasame = "murasamebot.bootstrap.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"murasamebot.bootstrap" = ["dashboard.html", "dashboard.css"]
+"murasamebot.bootstrap" = ["dashboard.html", "dashboard.css", "owner-history.js"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

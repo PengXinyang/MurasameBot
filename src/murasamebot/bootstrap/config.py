@@ -14,6 +14,7 @@ import yaml
 from murasamebot.application.settings import Behaviour
 from murasamebot.application.memory import MemorySettings
 from murasamebot.application.autonomy import AutonomySettings
+from murasamebot.application.owner_history import OwnerHistorySettings
 
 
 def merge(base: dict, override: dict) -> dict:
@@ -52,7 +53,7 @@ class Config:
         if not isinstance(raw, dict):
             raise ValueError("配置必须为 YAML 对象")
         from murasamebot.adapters.network import DIRECT_DOMAINS, GFWLIST_URL
-        raw = merge({"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
+        raw = merge({"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "limits":{"event_retry_seconds":60},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
@@ -80,6 +81,20 @@ class Config:
 
     @staticmethod
     def validate(data: dict):
+        history = data.get("owner_history", {})
+        if not isinstance(history,dict) or set(history)-set(OwnerHistorySettings.__dataclass_fields__):
+            raise ValueError("未知的主人观察设置")
+        for key in ("enabled","use_for_private","playful_jealousy","recommendations_enabled"):
+            if type(history.get(key)) is not bool:
+                raise ValueError("主人观察开关必须为布尔值")
+        for key,low,high in (("poll_seconds",60,86400),("pages",1,3),("retention_days",1,30),
+                ("window_minutes",5,1440),("context_limit",1,20),("recommendation_daily_limit",1,10),("recommendation_gap_minutes",30,10080)):
+            if type(history.get(key)) is not int or not low<=history[key]<=high:
+                raise ValueError("主人观察数量或间隔超出允许范围")
+        topics = history.get("recommendation_topics")
+        if (not isinstance(topics,(list,tuple)) or len(topics)>20 or any(not isinstance(t,str) or not t.strip()
+                or len(t)>40 or re.search(r"[\r\n@<>]|https?://",t) for t in topics)):
+            raise ValueError("推荐主题需为最多20项的简短公开主题，不能填写私事、网址或提及")
         review = data.get("review",{})
         if not isinstance(review,dict) or set(review)-{"strategy"} or not isinstance(review.get("strategy","inline"),str) or review.get("strategy","inline") not in {"inline","independent"}:
             raise ValueError("审核策略只能为 inline（生成时判断）或 independent（独立模型复核）")
@@ -358,7 +373,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if set(patch.get("network", {})) - {"proxy_enabled", "proxy_url", "proxy_mode", "gfwlist_refresh_hours", "direct_domains"}:

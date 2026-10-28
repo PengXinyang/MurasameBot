@@ -28,8 +28,12 @@ def test_dashboard_requires_token_and_rejects_foreign_origin(tmp_path):
             assert client.post("/api/config",json={"review":{"strategy":"unknown"}},headers=headers).status_code==400
             assert client.post("/api/config",json={"review":{"strategy":[]}},headers=headers).status_code==400
             paths = ["/api/status", "/api/data/tasks", "/api/data/actions", "/api/data/memories", "/api/data/audit"] * 3
+            def checked_get(path):
+                response = client.get(path,headers=headers)
+                assert response.status_code == 200, response.text
+                return response.status_code
             with ThreadPoolExecutor(max_workers=5) as pool:
-                codes = list(pool.map(lambda p: client.get(p, headers=headers).status_code, paths))
+                codes = list(pool.map(checked_get, paths))
             assert codes == [200] * len(paths)
             foreign = {**headers, "Origin": "https://attacker.invalid"}
             assert client.post("/api/resume", json={}, headers=foreign).status_code == 401

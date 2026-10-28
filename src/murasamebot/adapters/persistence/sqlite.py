@@ -74,7 +74,10 @@ CREATE TABLE IF NOT EXISTS audit (
 SCHEMA_LOCK = Lock()
 
 
-class SQLiteStore(SQLiteMemory):
+from murasamebot.adapters.persistence.owner_history import SQLiteOwnerHistory, HISTORY_SCHEMA
+
+
+class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory):
     def __init__(self, path: str | Path, agent_id: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +104,9 @@ class SQLiteStore(SQLiteMemory):
             if version != 2:
                 raise RuntimeError(f"不兼容的数据库版本：{version}")
             self._memory_index(db)
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_history'").fetchone():
+                db.executescript(HISTORY_SCHEMA)
+            db.execute("DELETE FROM owner_history WHERE expires_at<=?", (time.time(),))
 
     @contextmanager
     def connection(self):
