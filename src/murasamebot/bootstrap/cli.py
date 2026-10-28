@@ -8,6 +8,8 @@ import tempfile
 from threading import Event as StopEvent
 import time
 
+import httpx
+
 from murasamebot.adapters.characters.lingchat import load_persona
 from murasamebot.adapters.demo import run_demo
 from murasamebot.adapters.platforms.bilibili import REGIONS
@@ -72,6 +74,11 @@ def parser() -> argparse.ArgumentParser:
     sub.add_parser("login", help="扫码登录；凭证只写入本地 .secrets")
     sub.add_parser("categories", help="显示适配器分区参考 ID")
     sub.add_parser("config", help="显示不含密钥的实际配置")
+    check = sub.add_parser("comment-check", help="只读核查已受理评论的状态，不发布或重发")
+    check.add_argument("id", help="管理台中的本地动作 ID")
+    proxy = sub.add_parser("proxy-rules", help="查看网址的代理路由；不连接目标网址或打开账号数据库")
+    proxy.add_argument("--refresh", action="store_true", help="下载并验证最新 GFWList 规则")
+    proxy.add_argument("urls", nargs="*", help="需要判断的 HTTP(S) 网址")
     sub.add_parser("pause", help="暂停任务与出站")
     sub.add_parser("resume", help="人工解除暂停；认证错误仍会重新暂停")
     inspect = sub.add_parser("inspect", help="查看本地状态")
@@ -103,6 +110,25 @@ def main(argv=None):
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         config = Config(args.config)
+        if args.command == "proxy-rules":
+            from murasamebot.adapters.network import rules_for
+            policy = config.network_proxy
+            if args.refresh:
+                if not policy.proxy_url:
+                    raise ValueError("请先开启代理，再下载规则")
+                try:
+                    show(rules_for(policy).refresh())
+                except (OSError, ValueError, httpx.HTTPError):
+                    raise ValueError("代理规则更新失败，旧缓存保留；请检查代理和规则来源") from None
+            routes = []
+            for url in args.urls:
+                address = httpx.URL(url)
+                if address.scheme not in {"http", "https"} or not address.host or address.userinfo:
+                    raise ValueError("请输入无内嵌凭证的 HTTP(S) 网址")
+                routes.append({"host": address.host, "route": "proxy" if policy.should_proxy(address) else "direct"})
+            show({"enabled": bool(policy.proxy_url), "mode": policy.mode,
+                  "rules": rules_for(policy).status(), "routes": routes})
+            return
         if args.command == "demo":
             persona = load_persona(config.file("character_source"), config.file("character_profile"))
             with tempfile.TemporaryDirectory(prefix="murasame-demo-", dir=config.root) as folder:
@@ -161,6 +187,10 @@ def main(argv=None):
                     report["account_check"] = runtime.platform.account()
                     report["note"] = "仅验证只读登录状态，未发布评论或验收其他接口"
                 show(report)
+            elif args.command == "comment-check":
+                from dataclasses import asdict
+                from murasamebot.application.publication import PublicationService
+                show(asdict(PublicationService(runtime.store, {"bilibili": runtime.platform}).check(args.id)))
             elif args.command == "ingest":
                 data = json.loads(args.file.read_text(encoding="utf-8"))
                 added = runtime.engine.ingest(Event.from_dict(data))

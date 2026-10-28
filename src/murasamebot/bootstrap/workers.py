@@ -67,8 +67,10 @@ class WorkerCoordinator:
         store = prepare_store(config)
         store.recover_idle_work(time.time())
         state = store.queue_status(review_strategy=config.data.get("review",{}).get("strategy","inline"))
-        if state["pending_events"] or (config.data["mode"] == "reviewed" and state["review_ready_actions"]):
-            for _ in range(max(0, limit - len(self.messages))):
+        ready = state.get("ready_events",state["pending_events"])
+        jobs = ready + (state["review_ready_actions"] if config.data["mode"] == "reviewed" else 0)
+        if jobs:
+            for _ in range(min(jobs,max(0, limit - len(self.messages)))):
                 self.messages.append(self.pool.submit(self.job, "message"))
         if (self.sender is None or self.sender.done()) and state["queued_actions"]:
             if self.sender is not None:
@@ -78,7 +80,7 @@ class WorkerCoordinator:
             self.collect(self.memory)
             self.memory = None
         # Maintenance gets a single lane and yields to incoming generation/review.
-        if (self.memory is None and not self.messages and not state["pending_events"]
+        if (self.memory is None and not self.messages and not ready
                 and not state["review_ready_actions"] and not (self.background and not self.background.done())):
             now = time.time()
             if now-store.get_setting("memory_pump_at",0)>=30:

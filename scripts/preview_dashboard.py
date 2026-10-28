@@ -16,7 +16,7 @@ import yaml
 from murasamebot.bootstrap.web import handler_for
 from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.runtime import prepare_store
-from murasamebot.domain.models import Action, Event
+from murasamebot.domain.models import Action, Event, ContentRef, PublicationCheck, Receipt
 
 
 def main():
@@ -51,6 +51,13 @@ def main():
                                        kind="private_reply", evidence_level="conversation", visibility="private", recipient_id="424242", source_sequence=1,
                                        conversation_id=preview_event.conversation_id, event_id=preview_event.event_id, reply_to="100",
                                        review_state="rejected", review_method="inline",review_reason="演示：生成时判断需人工确认。"), draft=True, now=stamp)
+    # A synthetic accepted comment demonstrates that acceptance and visibility
+    # remain separate; this fixture never contacts the real platform.
+    preview_store.enqueue_action(Action("preview-comment", data["agent_id"], "bilibili", "999", ContentRef("bilibili", "video", "12345"),
+        "这段讲解很清楚，吾辈学到啦。", stamp, stamp+3600, kind="reply", review_state="passed", review_method="inline"), draft=False, now=stamp)
+    preview_store.claim_action(stamp,100,100,stamp-1,0,0)
+    preview_store.finish_action("preview-comment",Receipt("accepted","800","平台已受理，公开可见性尚未独立验证",
+        publication_check=PublicationCheck("self_only","平台状态17：疑似仅发送账号可见，未自动重发",stamp,17,1)),stamp)
     output = ROOT.parent / "docs" / "dashboard-preview.png"
     output.parent.mkdir(exist_ok=True)
     browser = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")

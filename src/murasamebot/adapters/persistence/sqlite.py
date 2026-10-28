@@ -188,11 +188,31 @@ class SQLiteStore(SQLiteMemory):
                                    (dumps(asdict(event.share_content)), self.agent_id, event.event_id))
             return cur.rowcount == 1
 
+    @staticmethod
+    def _event_ordering_key(alias):
+        # Public speakers in one thread are independent lanes. A verified linked
+        # private identity stays serialized across platforms for intent ordering.
+        def value(key):
+            return f"json_extract({alias}.payload,'$.{key}')"
+        return (f"COALESCE((SELECT json_array('person',b.person_id) FROM bindings b "
+                f"WHERE b.agent_id={alias}.agent_id AND b.platform={value('platform')} "
+                f"AND b.external_id={value('actor_id')} AND b.active=1 AND {value('visibility')}='private'),"
+                f"json_array({value('visibility')},{value('platform')},{value('account_id')},"
+                f"{value('conversation_id')},{value('actor_id')}))")
+
+    @classmethod
+    def _action_ordering_key(cls, alias):
+        # Derive from the authoritative inbound event, not model-generated text.
+        # Legacy/autonomous actions without an event retain conversation ordering.
+        return (f"COALESCE((SELECT {cls._event_ordering_key('source')} FROM events source "
+                f"WHERE source.agent_id={alias}.agent_id AND source.event_id=json_extract({alias}.payload,'$.event_id')),"
+                f"json_array('legacy',json_extract({alias}.payload,'$.platform'),json_extract({alias}.payload,'$.account_id'),"
+                f"json_extract({alias}.payload,'$.conversation_id')))")
+
     def claim_event(self, now):
         with self.transaction() as db:
             db.execute("UPDATE events SET state='pending' WHERE agent_id=? AND state='processing' AND lease_until<?", (self.agent_id, now))
-            def ordering_key(alias):
-                return f"COALESCE((SELECT 'person:'||b.person_id FROM bindings b WHERE b.agent_id={alias}.agent_id AND b.platform=json_extract({alias}.payload,'$.platform') AND b.external_id=json_extract({alias}.payload,'$.actor_id') AND b.active=1 AND json_extract({alias}.payload,'$.visibility')='private'),'conversation:'||json_extract({alias}.payload,'$.conversation_id'))"
+            ordering_key = self._event_ordering_key
             row = db.execute(f"SELECT * FROM events WHERE agent_id=? AND state='pending' AND next_at<=? AND NOT EXISTS (SELECT 1 FROM events earlier WHERE earlier.agent_id=events.agent_id AND earlier.event_id!=events.event_id AND {ordering_key('earlier')}={ordering_key('events')} AND (earlier.state='processing' OR (earlier.state='pending' AND earlier.rowid<events.rowid))) AND NOT EXISTS (SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') ORDER BY CASE WHEN json_extract(payload,'$.kind') IN ('mention','post_mention','reply','private_message','chat') THEN 0 ELSE 1 END,rowid LIMIT 1", (self.agent_id, now)).fetchone()
             if not row:
                 return None
@@ -212,12 +232,12 @@ class SQLiteStore(SQLiteMemory):
             row = db.execute("SELECT payload FROM events WHERE agent_id=? AND event_id=? AND state!='deleted'", (self.agent_id, event_id)).fetchone()
         return Event.from_dict(json.loads(row[0])) if row else None
 
-    def retry_event(self, event_id, now, reason, max_attempts):
+    def retry_event(self, event_id, now, reason, max_attempts, *, delay_seconds=60):
         with self.transaction() as db:
             row = db.execute("SELECT attempts FROM events WHERE agent_id=? AND event_id=?", (self.agent_id, event_id)).fetchone()
             if row:
                 state = "failed" if row[0] >= max_attempts else "pending"
-                db.execute("UPDATE events SET state=?,reason=?,next_at=?,lease_until=0 WHERE agent_id=? AND event_id=? AND state!='deleted'", (state, reason[:500], now + min(3600, 120 * 2 ** row[0]), self.agent_id, event_id))
+                db.execute("UPDATE events SET state=?,reason=?,next_at=?,lease_until=0 WHERE agent_id=? AND event_id=? AND state!='deleted'", (state, reason[:500], now + delay_seconds, self.agent_id, event_id))
 
     def memory(self, person_id, scope, purpose, now, *, limit=8, query=""):
         # Scope and purpose filtering happens in SQL, before any relevance ranking.
@@ -397,7 +417,7 @@ class SQLiteStore(SQLiteMemory):
             last = db.execute(f"SELECT MAX(COALESCE(sent_at,created_at)) FROM actions WHERE agent_id=? AND state IN {states}", (self.agent_id,)).fetchone()[0]
             if last is not None and now - last < min_gap:
                 return None
-            rows = db.execute("SELECT rowid AS queue_order,payload,kind FROM actions WHERE agent_id=? AND state='queued' ORDER BY CASE kind WHEN 'reply' THEN 0 WHEN 'private_reply' THEN 0 WHEN 'recommendation' THEN 1 ELSE 2 END,created_at", (self.agent_id,)).fetchall()
+            rows = db.execute(f"SELECT rowid AS queue_order,payload,kind,{self._action_ordering_key('actions')} AS ordering_key FROM actions WHERE agent_id=? AND state='queued' ORDER BY CASE kind WHEN 'reply' THEN 0 WHEN 'private_reply' THEN 0 WHEN 'recommendation' THEN 1 ELSE 2 END,created_at", (self.agent_id,)).fetchall()
             for row in rows:
                 action = Action.from_dict(json.loads(row["payload"]))
                 paused = db.execute("SELECT value FROM settings WHERE agent_id=? AND key=?", (self.agent_id, f"platform_paused:{action.platform}")).fetchone()
@@ -407,7 +427,7 @@ class SQLiteStore(SQLiteMemory):
                     continue
                 if require_review and not action.approved_manually and action.kind not in {"like", "coin"} and (action.review_state != "passed" or required_review_method=="independent" and action.review_method=="inline"):
                     continue
-                if action.conversation_id and db.execute("SELECT 1 FROM actions WHERE agent_id=? AND rowid<? AND state IN ('queued','reviewing') AND json_extract(payload,'$.conversation_id')=?", (self.agent_id, row["queue_order"], action.conversation_id)).fetchone():
+                if action.conversation_id and db.execute(f"SELECT 1 FROM actions earlier WHERE agent_id=? AND rowid<? AND state IN ('queued','reviewing') AND {self._action_ordering_key('earlier')}=?", (self.agent_id, row["queue_order"], row["ordering_key"])).fetchone():
                     continue
                 if not allow_proactive and (action.proactive or action.kind in {"recommendation", "browse_comment", "browse_reply"}):
                     continue
@@ -509,6 +529,32 @@ class SQLiteStore(SQLiteMemory):
             if task_id:
                 self._cancel_task(db, task_id)
 
+    def publication_target(self, action_id):
+        with self.connection() as db:
+            row = db.execute("SELECT payload,receipt FROM actions WHERE agent_id=? AND action_id=? AND state='accepted'", (self.agent_id,action_id)).fetchone()
+        if not row:
+            raise ValueError("只能核查平台已受理的动作")
+        receipt = json.loads(row['receipt'])
+        if receipt.get('state') != 'accepted' or not receipt.get('external_id'):
+            raise ValueError("缺少可核对的平台回执 ID")
+        return Action.from_dict(json.loads(row['payload'])), receipt['external_id']
+
+    def record_publication_check(self, action_id, external_id, report):
+        if report.status not in {'unverified','account_visible','self_only','pending','folded','abnormal','not_found','unavailable'}:
+            raise ValueError("无效的发布核查状态")
+        with self.transaction() as db:
+            row = db.execute("SELECT receipt FROM actions WHERE agent_id=? AND action_id=? AND state='accepted'", (self.agent_id,action_id)).fetchone()
+            if not row:
+                raise ValueError("动作状态已变化，未覆盖回执")
+            receipt = json.loads(row['receipt'])
+            if receipt.get('external_id') != external_id:
+                raise ValueError("平台回执 ID 已变化，未覆盖核查结果")
+            previous = receipt.get('publication_check') or {}
+            if previous.get('checked_at',0) > report.checked_at:
+                return
+            receipt['publication_check'] = asdict(report)
+            db.execute("UPDATE actions SET receipt=? WHERE agent_id=? AND action_id=? AND state='accepted'", (dumps(receipt),self.agent_id,action_id))
+
     def resolve_action(self, action_id, state, external_id, now):
         if state not in {"accepted", "failed"} or (state == "accepted" and not external_id):
             raise ValueError("人工确认受理时必须提供实际评论 ID")
@@ -569,12 +615,34 @@ class SQLiteStore(SQLiteMemory):
                 if task_id:
                     db.execute("UPDATE tasks SET state='delivery_unknown' WHERE agent_id=? AND task_id=? AND state!='cancelled'", (self.agent_id,task_id))
 
-    def queue_status(self, *, review_strategy="independent"):
+    def queue_status(self, *, review_strategy="independent", now=None):
+        now = time.time() if now is None else now
         with self.connection() as db:
             events = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM events WHERE agent_id=? GROUP BY state", (self.agent_id,))}
             actions = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM actions WHERE agent_id=? GROUP BY state", (self.agent_id,))}
             reviews = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND (COALESCE(json_extract(payload,'$.review_state'),'')!='passed' OR (?='independent' AND json_extract(payload,'$.review_method')='inline'))", (self.agent_id,review_strategy)).fetchone()[0]
+            pending = db.execute(f"SELECT state,next_at,{self._event_ordering_key('events')} AS ordering_key,"
+                                 "EXISTS(SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') AS paused "
+                                 "FROM events WHERE agent_id=? AND state IN ('pending','processing') ORDER BY rowid", (self.agent_id,)).fetchall()
+        occupied = {r['ordering_key'] for r in pending if r['state']=='processing'}
+        ready, retry, blocked, paused, next_retry = 0, 0, 0, 0, None
+        for row in pending:
+            if row['state'] != 'pending':
+                continue
+            key = row['ordering_key']
+            if key in occupied:
+                blocked += 1
+            elif row['paused']:
+                paused += 1
+            elif row['next_at'] > now:
+                retry += 1
+                next_retry = min(next_retry, row['next_at']) if next_retry is not None else row['next_at']
+            else:
+                ready += 1
+            occupied.add(key)
         return {"pending_events": events.get("pending", 0), "processing_events": events.get("processing", 0),
+                "ready_events": ready, "retry_wait_events": retry, "blocked_events": blocked, "paused_events": paused,
+                "failed_events": events.get("failed",0), "next_retry_at": next_retry,
                 "reviewing_actions": actions.get("reviewing", 0), "queued_actions": actions.get("queued", 0), "draft_actions": actions.get("draft", 0), "review_ready_actions": reviews}
 
     def reserve_model_call(self, day, limit):

@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import re
 import time
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 from PIL import Image
@@ -17,6 +17,7 @@ from PIL import Image
 from murasamebot.adapters.network import client as network_client
 from murasamebot.adapters.platforms.bilibili_private import BilibiliPrivateMixin
 from murasamebot.adapters.platforms.bilibili_emojis import BilibiliEmojiMixin
+from murasamebot.adapters.platforms.bilibili_publication import BilibiliPublicationMixin, classify_comment
 
 from murasamebot.domain.models import Action, ContentRef, Document, Event, ImageRef, PlatformError as CorePlatformError, Receipt
 
@@ -25,6 +26,12 @@ API = "https://api.bilibili.com"
 PASSPORT = "https://passport.bilibili.com"
 COMMENT_TYPES = {"video": 1, "dynamic": 17, "draw": 11, "article": 12}
 TYPE_KINDS = {value: key for key, value in COMMENT_TYPES.items()}
+WEB_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Referer": "https://www.bilibili.com/",
+    "Accept": "application/json, text/plain, */*",
+}
+CREDENTIAL_FIELDS = {"SESSDATA", "bili_jct", "DedeUserID", "buvid3", "buvid4", "ac_time_value"}
 # Compatibility catalog for these community endpoints, not a claim that the website's
 # current navigation is identical. Current content responses provide tid/tname for inspection.
 REGIONS = {
@@ -51,7 +58,7 @@ def numeric(value: object) -> str:
     return text
 
 
-class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin):
+class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicationMixin):
     """Bilibili protocol details stay here. No dependency on an archived SDK."""
 
     def __init__(self, credentials_path: Path, *, expected_uid: str = "", pages: int = 3,
@@ -72,9 +79,10 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin):
         self.inbox_batch_limit = inbox_batch_limit
         self.poll_warnings = []
 
-        self.client = client or network_client(proxy_url=proxy_url, headers={
-            "User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/",
-        }, timeout=httpx.Timeout(25, connect=10))
+        self.client = client or network_client(proxy_url=proxy_url, headers=WEB_HEADERS,
+                                               timeout=httpx.Timeout(25, connect=10))
+        if client is not None:
+            self.client.headers.update(WEB_HEADERS)
         self.credentials = self._load_credentials()
         self._sync_cookies()
         self._wbi_key: tuple[str, float] | None = None
@@ -98,7 +106,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin):
         data = json.loads(self.credentials_path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("登录凭证必须为 JSON 对象")
-        return {k: str(v) for k, v in data.items() if k in {"SESSDATA", "bili_jct", "DedeUserID", "buvid3", "buvid4"}}
+        return {k: str(v) for k, v in data.items() if k in CREDENTIAL_FIELDS and isinstance(v, str) and v}
 
     @property
     def configured(self) -> bool:
@@ -146,19 +154,31 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin):
         if self.credentials.get("DedeUserID") and uid != self.credentials["DedeUserID"]:
             raise PlatformError("登录凭证中的 UID 不一致", code="wrong_account", pause=True)
         self._account = {"uid": uid, "name": str(data.get("uname", "")), "money": data.get("money")}
+        self._cache_wbi_key(data)
         return self._account
+
+    def _cache_wbi_key(self, nav: dict) -> bool:
+        wbi = nav.get("wbi_img")
+        if not isinstance(wbi, dict):
+            return False
+        keys = [urlparse(str(wbi.get(key) or "")).path.rsplit("/", 1)[-1].split(".")[0]
+                for key in ("img_url", "sub_url")]
+        if not all(re.fullmatch(r"[0-9a-fA-F]{32}", key) for key in keys):
+            return False
+        original = "".join(keys)
+        self._wbi_key = ("".join(original[i] for i in MIXIN_INDEX)[:32], time.time() + 1800)
+        return True
 
     def _signed(self, params):
         if not self._wbi_key or self._wbi_key[1] < time.time():
             nav, _ = self._request("/x/web-interface/nav")
-            wbi = nav.get("wbi_img") or {}
-            original = "".join(urlparse(wbi[key]).path.rsplit("/", 1)[-1].split(".")[0] for key in ("img_url", "sub_url"))
-            if len(original) < 64:
+            if not self._cache_wbi_key(nav):
                 raise PlatformError("无法取得站内接口签名参数")
-            self._wbi_key = ("".join(original[i] for i in MIXIN_INDEX)[:32], time.time() + 1800)
+        params = dict(params)
+        params.pop("w_rid", None)
         params["wts"] = int(time.time())
         cleaned = {str(k): re.sub(r"[!'()*]", "", str(v)) for k, v in sorted(params.items())}
-        cleaned["w_rid"] = md5((urlencode(cleaned) + self._wbi_key[0]).encode()).hexdigest()
+        cleaned["w_rid"] = md5((urlencode(cleaned, quote_via=quote) + self._wbi_key[0]).encode()).hexdigest()
         return cleaned
 
     def generate_login(self) -> dict:
@@ -169,8 +189,23 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin):
         data, response = self._request(PASSPORT + "/x/passport-login/web/qrcode/poll", params={"qrcode_key": key})
         status = int(data.get("code", -1))
         if status == 0:
-            credentials = {cookie.name: cookie.value for cookie in response.cookies.jar
-                           if cookie.name in {"SESSDATA", "bili_jct", "DedeUserID", "buvid3", "buvid4"}}
+            # Persist server-issued cookies received during this login session,
+            # not only the final poll's Set-Cookie. Do not invent device IDs or
+            # retain another account's auth/refresh fields after switching users.
+            credentials = {key: self.credentials[key] for key in ("buvid3", "buvid4") if self.credentials.get(key)}
+            for jar in (self.client.cookies.jar, response.cookies.jar):
+                for cookie in jar:
+                    if (cookie.name in CREDENTIAL_FIELDS and cookie.value
+                            and cookie.domain.lstrip(".") in {"bilibili.com", "passport.bilibili.com", "api.bilibili.com"}):
+                        credentials[cookie.name] = cookie.value
+            # Final confirmation must supply fresh account auth, not stale
+            # cookies from a previous login still held by the HTTP client.
+            confirmed = {cookie.name: cookie.value for cookie in response.cookies.jar
+                         if cookie.name in CREDENTIAL_FIELDS and cookie.domain.lstrip(".") in {"bilibili.com", "passport.bilibili.com", "api.bilibili.com"}}
+            for key in ("SESSDATA", "bili_jct", "DedeUserID", "ac_time_value"):
+                credentials.pop(key, None)
+                if confirmed.get(key):
+                    credentials[key] = confirmed[key]
             if not credentials.get("SESSDATA") or not credentials.get("bili_jct"):
                 raise PlatformError("扫码成功但未取得完整 Cookie")
             self.credentials_path.parent.mkdir(parents=True, exist_ok=True)
@@ -480,15 +515,22 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin):
         names = {self._mention_name(uid): int(uid) for uid in mentions.values()}
         message = "".join(f"@{name} " for name in names) + action.text
         fields = {"oid": numeric(action.content.external_id), "type": COMMENT_TYPES[action.content.kind],
-                  "message": message, "csrf": self.credentials["bili_jct"], "plat": 1}
+                  "message": message, "csrf": self.credentials["bili_jct"], "plat": 1,
+                  "statistics": json.dumps({"appId": 100, "platform": 5}, separators=(",", ":")),
+                  "gaia_source": "main_web", "at_name_to_mid": json.dumps(names, ensure_ascii=False)}
         if action.reply_to:
             fields.update({"root": numeric(action.thread_root or action.reply_to), "parent": numeric(action.reply_to)})
-        if names:
-            fields["at_name_to_mid"] = json.dumps(names, ensure_ascii=False)
+        # The captured successful video request is signed even though its path
+        # has no /wbi segment. Do not reuse captured timestamps or environment
+        # tokens. Other comment surfaces retain their existing signing policy.
+        params = self._signed({}) if action.content.kind == "video" else None
+        headers = {"Origin": "https://www.bilibili.com", "Accept-Language": "zh-CN,zh;q=0.9"}
+        if action.content.kind == "video":
+            headers["Referer"] = f"https://www.bilibili.com/video/av{numeric(action.content.external_id)}/"
         if before_write is not None and not before_write():
             return Receipt("failed", detail="发送前的最终检查未通过：任务、绑定或运行状态已经改变")
         try:
-            response = self.client.post(API + "/x/v2/reply/add", data=fields)
+            response = self.client.post(API + "/x/v2/reply/add", params=params, data=fields, headers=headers)
             if response.status_code != 200:
                 # An intermediary or invalid response may have hidden successful acceptance.
                 return Receipt("unknown", detail=f"写请求返回 HTTP {response.status_code}，需要人工核对", pause=response.status_code in {403, 412, 429})
@@ -506,7 +548,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin):
             return Receipt("unknown", detail="平台返回成功但没有可核对的评论 ID")
         resolved = {str(member.get("mid")) for member in ((reply.get("content") or {}).get("members") or [])}
         mention_resolved = all(str(mid) in resolved for mid in names.values())
-        return Receipt("accepted", rpid, "平台已受理，公开可见性尚未独立验证", mention_resolved)
+        return Receipt("accepted", rpid, "平台已受理，公开可见性尚未独立验证", mention_resolved,
+                       publication_check=classify_comment(reply))
 
     def _send_reaction(self, action: Action, *, before_write=None) -> Receipt:
         ref = action.content

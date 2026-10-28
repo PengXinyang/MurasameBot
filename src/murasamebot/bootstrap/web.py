@@ -20,6 +20,7 @@ CHARACTER_ASSETS = {
     "/assets/character/normal.png": "正常.png",
     "/assets/character/happy.png": "高兴.png",
 }
+CLIENT_DISCONNECTS = (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)
 
 
 def admin_token(root: Path) -> str:
@@ -33,21 +34,40 @@ def admin_token(root: Path) -> str:
 
 def handler_for(config_path: Path, token: str):
     class Handler(BaseHTTPRequestHandler):
+        def handle(self):
+            try:
+                super().handle()
+            except CLIENT_DISCONNECTS:
+                # Covers a closed browser while reading a request or flushing,
+                # as well as response()'s normal header/body write protection.
+                self._client_disconnected = True
+                self.close_connection = True
+
         def log_message(self, format, *args):
             # Avoid recording tokens, private requests or URL query parameters.
             pass
 
         def response(self, status, data, *, html=False, content_type=None):
+            if getattr(self, "_client_disconnected", False):
+                return False
             body = data if isinstance(data, bytes) else data.encode("utf-8") if html else json.dumps(data, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", content_type or ("text/html; charset=utf-8" if html else "application/json; charset=utf-8"))
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", content_type or ("text/html; charset=utf-8" if html else "application/json; charset=utf-8"))
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+                self.end_headers()
+                self.wfile.write(body)
+                return True
+            except CLIENT_DISCONNECTS:
+                # A peer disconnect is not a configuration/database error. Never
+                # send another HTTP error to this socket or rerun a POST action.
+                self._client_disconnected = True
+                self.close_connection = True
+                return False
 
         def authorized(self):
             host = self.headers.get("Host", "")
@@ -157,6 +177,16 @@ def handler_for(config_path: Path, token: str):
                     store.approve_action(str(data["id"]), time.time())
                 elif path == "/api/reject":
                     store.reject_action(str(data["id"]))
+                elif path == "/api/publication/check":
+                    from dataclasses import asdict
+                    from murasamebot.application.publication import PublicationService
+                    runtime = build(config)
+                    try:
+                        result = PublicationService(store, {"bilibili": runtime.platform}).check(str(data["id"]))
+                        self.response(200, asdict(result))
+                    finally:
+                        runtime.close()
+                    return
                 elif path == "/api/cancel":
                     store.cancel_task(str(data["id"]))
                 elif path == "/api/forget":

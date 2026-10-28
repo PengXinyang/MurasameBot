@@ -175,10 +175,11 @@ def test_bilibili_catalog_filters_access_and_expiry_but_not_unlocked_flag(tmp_pa
 
 
 def test_native_comment_encoding_and_revoked_emoji_blocks_send(tmp_path):
+    from test_bilibili_contracts import nav_data
     posts=[]; revoked=[False]
     def handle(request):
         if request.url.path.endswith("nav"):
-            data={"isLogin":True,"mid":999}
+            data=nav_data()
         elif request.url.path.endswith("panel/web"):
             data={"packages":[{"emote":[{"id":102084,"text":CONGYU.token,"meta":{"alias":"丛雨Ciallo"},"flags":{"no_access":revoked[0]}}]}]}
         else:

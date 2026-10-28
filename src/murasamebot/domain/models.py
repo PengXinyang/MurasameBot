@@ -126,11 +126,14 @@ class Persona:
     examples: tuple[str, ...]
     version: str
     source_changed: bool = False
+    private_owner_context: str = ""
 
-    def prompt(self, owner_addressed: bool = False) -> str:
+    def prompt(self, owner_addressed: bool = False, *, private: bool = False) -> str:
         parts = [self.public_background, self.style, "表达示例：", *self.examples]
         if owner_addressed:
             parts.append(self.owner_style)
+            if private and self.private_owner_context:
+                parts.append(self.private_owner_context)
         return "\n".join(parts)
 
 
@@ -197,12 +200,22 @@ class Action:
 
 
 @dataclass(frozen=True)
+class PublicationCheck:
+    status: str
+    detail: str
+    checked_at: float
+    platform_state: int | None = None
+    checked_pages: int = 0
+
+
+@dataclass(frozen=True)
 class Receipt:
     state: str  # accepted, failed, unknown
     external_id: str = ""
     detail: str = ""
     mention_resolved: bool = True
     pause: bool = False
+    publication_check: PublicationCheck | None = None
 
 
 @dataclass(frozen=True)

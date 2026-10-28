@@ -182,4 +182,4 @@ class BilibiliPrivateMixin:
         key = str((payload.get("data") or {}).get("msg_key") or "")
         if not number(key):
             return Receipt("unknown", detail="私信返回成功但没有可核对的消息 ID，禁止重发")
-        return Receipt("accepted", key, "平台已受理私信，客户端送达尚未独立验证")
+        return Receipt("accepted", key, "平台已受理私信")

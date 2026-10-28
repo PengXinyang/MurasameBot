@@ -104,6 +104,7 @@ class SocialEngine:
         return self._process_one_event(now)
 
     def _process_one_event(self, now: float | None = None) -> bool:
+        live_clock = now is None
         now = time.time() if now is None else now
         if self.paused():
             return False
@@ -126,8 +127,10 @@ class SocialEngine:
         except (ModelError, PlatformError, PolicyError, ValueError, KeyError) as exc:
             if isinstance(exc, PlatformError) and exc.pause:
                 self.pause_platform(exc, event.platform)
-            self.store.retry_event(event.event_id, now, str(exc), self.settings.max_event_attempts)
-            self.store.audit("event_error", f"{event.event_id}: {type(exc).__name__}: {exc}", now)
+            failed_at = time.time() if live_clock else now
+            self.store.retry_event(event.event_id, failed_at, str(exc), self.settings.max_event_attempts,
+                                   delay_seconds=self.settings.event_retry_seconds)
+            self.store.audit("event_error", f"{event.event_id}: {type(exc).__name__}: {exc}", failed_at)
         return True
 
     def _owner_intent(self, event: Event, person: str, now: float) -> dict:
@@ -256,7 +259,7 @@ class SocialEngine:
         scope = f"conversation:{event.platform}:{event.conversation_id}"
         context = self.memory_service.context(event,person,owner,now)
         result, options = self.message_decision("private_chat", {
-            "persona": self.persona.prompt(owner), "message": event.text,
+            "persona": self.persona.prompt(owner, private=True), "message": event.text,
             "owner_addressed": owner, **context,
             "intent_result": intent, "browsing_enabled": self.settings.browsing_enabled,
             "max_characters": self.settings.max_private_characters,
@@ -308,9 +311,9 @@ class SocialEngine:
         }, event.platform, event.account_id, "public", now)
         if result.get("decision") not in {"reply", "skip"}:
             raise PolicyError("回复决策类型无效")
-        if document:
-            self._queue_reactions(document, now, result.get("interested") is True, event=event)
         if result.get("decision") == "skip":
+            if document:
+                self._queue_reactions(document, now, result.get("interested") is True, event=event)
             return
         text, emojis = self.message_text(result, options, self.settings.max_comment_characters)
         action = Action(
@@ -326,6 +329,10 @@ class SocialEngine:
             memory_epoch=result["_memory_epoch"],
         )
         self.enqueue_generated(action,result,now)
+        if document:
+            # Publish the response decision before optional reactions become
+            # claimable, so the sender cannot spend the minute on a coin first.
+            self._queue_reactions(document, now, result.get("interested") is True, event=event)
 
     def _owner_repost(self, event: Event, now: float) -> None:
         binding = self.store.binding(self.settings.owner_person_id, event.platform)
@@ -616,7 +623,7 @@ class SocialEngine:
                      (event and self.store.resolve_person(event.platform, event.actor_id) == self.settings.owner_person_id))
         try:
             result = self.model.decide("review_action", {
-                "persona": self.persona.prompt(owner), "proposed_text": action.text,
+                "persona": self.persona.prompt(owner, private=action.visibility == "private"), "proposed_text": action.text,
                 "channel": "private" if action.visibility == "private" else "public", "action_kind": action.kind,
                 "owner_addressed": owner, "source_message": event.text if event else None,
                 "content": document.public_context() if document else None,

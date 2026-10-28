@@ -9,6 +9,7 @@ import time
 from murasamebot.adapters.characters.lingchat import load_persona
 from murasamebot.adapters.artwork.sources import PixivSource, XSource
 from murasamebot.adapters.models.chat_completions import ChatCompletionsModel
+from murasamebot.adapters.network import rules_for
 from murasamebot.adapters.media.http_images import HTTPImageReader
 from murasamebot.adapters.persistence.sqlite import SQLiteStore
 from murasamebot.adapters.platforms.bilibili import BilibiliAdapter
@@ -201,21 +202,21 @@ def build(config: Config, *, concurrency=None) -> Runtime:
     store = prepare_store(config)
     b = config.data["bilibili"]
     platform = BilibiliAdapter((config.root / b["credentials"]).resolve(), expected_uid=str(b.get("robot_uid", "")),
-                               pages=b["notification_pages"], max_age_hours=b["notification_max_age_hours"], proxy_url=config.proxy_url,
+                               pages=b["notification_pages"], max_age_hours=b["notification_max_age_hours"], proxy_url=config.network_proxy,
                                private_session_pages=b.get("private_session_pages", 3), private_message_pages=b.get("private_message_pages", 3),
                                private_max_age_hours=b.get("private_message_max_age_hours", 24),
                                read_video_subtitles=b.get("read_video_subtitles", True), inbox_batch_limit=b.get("inbox_batch_limit", 90))
     m = config.data["model"]
     model = ChatCompletionsModel(base_url=m["base_url"], name=m["name"], api_key=m["api_key"], store=store,
                                  timezone=config.data["timezone"], daily_limit=m["daily_call_limit"],
-                                 timeout=m["timeout_seconds"], max_context=m["max_context_characters"], proxy_url=config.proxy_url,
+                                 timeout=m["timeout_seconds"], max_context=m["max_context_characters"], proxy_url=config.network_proxy,
                                  max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency)
     persona = load_persona(config.file("character_source"), config.file("character_profile"))
     if persona.source_changed:
         LOG.warning("源人设已变化：请复核 character/text_profile.yml，现有记忆与任务保留")
     v = config.data.get("vision", {})
     vision_settings = VisionSettings(**{key: v[key] for key in VisionSettings.__dataclass_fields__ if key in v})
-    reader = HTTPImageReader(hosts=tuple(v.get("allowed_image_hosts", ["i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com"])), proxy_url=config.proxy_url)
+    reader = HTTPImageReader(hosts=tuple(v.get("allowed_image_hosts", ["i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com"])), proxy_url=config.network_proxy)
     resources = [reader]
     vision_model = model
     if v.get("base_url") or v.get("name") or v.get("api_key"):
@@ -224,7 +225,7 @@ def build(config: Config, *, concurrency=None) -> Runtime:
         key = v.get("api_key") or (m["api_key"] if base.rstrip("/") == m["base_url"].rstrip("/") else "")
         vision_model = ChatCompletionsModel(base_url=base, name=v.get("name") or m["name"], api_key=key, store=store,
                                            timezone=config.data["timezone"], daily_limit=m["daily_call_limit"], timeout=m["timeout_seconds"],
-                                           max_context=m["max_context_characters"], proxy_url=config.proxy_url, max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency)
+                                           max_context=m["max_context_characters"], proxy_url=config.network_proxy, max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency)
         resources.append(vision_model)
     vision = VisionService(vision_settings, reader, vision_model, store, model_name=v.get("name") or m["name"])
     e = config.data.get("expressions", {})
@@ -273,7 +274,7 @@ def build(config: Config, *, concurrency=None) -> Runtime:
     a = config.data.get("artwork", {})
     sources = {}
     for source in a.get("sources", []):
-        sources[source] = PixivSource(a.get("pixiv_session", ""), proxy_url=config.proxy_url) if source == "pixiv" else XSource(a.get("x_bearer_token", ""), proxy_url=config.proxy_url)
+        sources[source] = PixivSource(a.get("pixiv_session", ""), proxy_url=config.network_proxy) if source == "pixiv" else XSource(a.get("x_bearer_token", ""), proxy_url=config.network_proxy)
     artwork = ArtDiscovery(ArtSettings.from_config(a), sources, store, model, persona)
     return Runtime(config, store, platform, model, engine, artwork, tuple(resources))
 
@@ -293,6 +294,8 @@ def readiness(runtime: Runtime) -> dict:
         "paused": runtime.engine.paused("bilibili"), "last_tick": runtime.store.get_setting("last_tick"),
         "live_verified": False,
         "proxy_enabled": bool(runtime.config.proxy_url),
+        "proxy_mode": runtime.config.data["network"]["proxy_mode"],
+        "proxy_rules": rules_for(runtime.config.network_proxy).status(),
         "artwork_enabled": runtime.config.data.get("artwork", {}).get("enabled", False),
         "private_messages_enabled": runtime.config.data["bilibili"].get("private_messages_enabled", True),
         "private_reply_policy": "mutual_follow_only",

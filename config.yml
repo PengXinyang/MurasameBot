@@ -12,6 +12,12 @@ text_language: zh
 network:
   proxy_enabled: true
   proxy_url: http://127.0.0.1:7890  # HTTP + HTTPS CONNECT; alternatively socks5://127.0.0.1:7890
+  proxy_mode: gfwlist  # Only matching URLs use the proxy; all is an optional override.
+  gfwlist_url: https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt
+  gfwlist_cache: data/gfwlist.txt
+  gfwlist_refresh_hours: 6
+  # These domains and subdomains always connect directly, before list matching.
+  direct_domains: [bilibili.com, b23.tv, biliapi.com, biliapi.net, bilivideo.com, hdslb.com, biliimg.com, qq.com, wechat.com, weixin.com, qpic.cn, qlogo.cn, gtimg.com, gtimg.cn]
 model:
   base_url: ${MURASAME_MODEL_BASE_URL}
   name: ${MURASAME_MODEL_NAME}
@@ -111,7 +117,7 @@ browsing:
 limits:
   daily_comments: 20
   daily_recommendations: 3
-  min_send_gap_seconds: 30
+  min_send_gap_seconds: 10
   recommendation_gap_minutes: 120
   action_ttl_minutes: 30
   request_expiry_days: 7
@@ -120,6 +126,7 @@ limits:
   max_private_characters: 400
   max_recommendation_characters: 80
   max_event_attempts: 3
+  event_retry_seconds: 60  # Fixed delay after each generation/read failure; never retries ambiguous writes.
 web:
   host: 127.0.0.1
   port: 8766

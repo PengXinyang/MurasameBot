@@ -21,11 +21,15 @@ def load_persona(source: Path, profile_path: Path) -> Persona:
         raise ValueError("文字人设字段不能为空")
     if not isinstance(profile["examples"], list) or not all(isinstance(s, str) for s in profile["examples"]):
         raise ValueError("角色示例必须是字符串列表")
+    private_context = profile.get("private_owner_context", "")
+    if not isinstance(private_context, str):
+        raise ValueError("主人私聊人设必须为字符串")
     source_hash = sha256(raw).hexdigest()
     name = settings.get("ai_name")
     if not isinstance(name, str) or not name.strip():
         raise ValueError("源配置缺少角色名")
     return Persona(name, profile["public_background"], profile["style"], profile["owner_style"],
                    tuple(profile["examples"]), sha256(raw + profile_bytes).hexdigest(),
-                   source_changed=profile.get("source_sha256") != source_hash)
+                   source_changed=profile.get("source_sha256") != source_hash,
+                   private_owner_context=private_context)
 

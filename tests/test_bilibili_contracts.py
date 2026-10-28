@@ -15,6 +15,12 @@ def credentials(tmp_path):
     return path
 
 
+def nav_data():
+    return {"isLogin": True, "mid": 999, "wbi_img": {
+        "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+        "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"}}
+
+
 def notification(kind, rpid="700"):
     return {"id": 100, "reply_time": 1000, "user": {"mid": 123, "nickname": "某人"},
             "item": {"source_id": int(rpid), "subject_id": 42, "business_id": kind,
@@ -91,7 +97,7 @@ def test_real_mention_mapping_and_thread_parent_are_encoded(tmp_path):
     writes = []
     def handle(request):
         if request.url.path.endswith("/nav"):
-            return httpx.Response(200, json={"code": 0, "data": {"isLogin": True, "mid": 999, "uname": "机器人"}})
+            return httpx.Response(200, json={"code": 0, "data": nav_data()})
         if request.url.path.endswith("/card"):
             return httpx.Response(200, json={"code": 0, "data": {"card": {"name": "当前主人昵称"}}})
         writes.append(parse_qs(request.content.decode()))
@@ -110,7 +116,7 @@ def test_post_timeout_is_unknown_and_not_retried(tmp_path):
     posts = []
     def handle(request):
         if request.method == "GET":
-            return httpx.Response(200, json={"code": 0, "data": {"isLogin": True, "mid": 999}})
+            return httpx.Response(200, json={"code": 0, "data": nav_data()})
         posts.append(request)
         raise httpx.ReadTimeout("timeout")
     adapter = BilibiliAdapter(credentials(tmp_path), client=httpx.Client(transport=httpx.MockTransport(handle)))
@@ -152,7 +158,7 @@ def test_final_gate_can_stop_write_after_account_lookup(tmp_path):
     def handle(request):
         calls.append(request.method)
         assert request.method == "GET", "最终校验拒绝后不能 POST"
-        return httpx.Response(200, json={"code": 0, "data": {"isLogin": True, "mid": 999}})
+        return httpx.Response(200, json={"code": 0, "data": nav_data()})
     adapter = BilibiliAdapter(credentials(tmp_path), client=httpx.Client(transport=httpx.MockTransport(handle)))
     action = Action("a", "agent", "bilibili", "999", ContentRef("bilibili", "video", "42"), "吾辈想聊聊这个。", 1000, 2000)
     result = adapter.send(action, {}, before_write=lambda: False)

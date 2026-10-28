@@ -30,12 +30,13 @@ class Behaviour:
     owner_interests: tuple[str, ...] = ()
     daily_comments: int = 20
     daily_recommendations: int = 3
-    min_send_gap_seconds: int = 30
+    min_send_gap_seconds: int = 10
     recommendation_gap_minutes: int = 120
     action_ttl_minutes: int = 30
     request_expiry_days: int = 7
     max_task_attempts: int = 3
     max_event_attempts: int = 3
+    event_retry_seconds: int = 60
     max_comment_characters: int = 250
     max_private_characters: int = 400
     max_recommendation_characters: int = 80

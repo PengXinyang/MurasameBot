@@ -50,7 +50,12 @@ class Config:
         raw = yaml.safe_load(self.path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise ValueError("配置必须为 YAML 对象")
-        raw = merge({"memory":asdict(MemorySettings()),"review":{"strategy":"inline"}},raw)
+        from murasamebot.adapters.network import DIRECT_DOMAINS, GFWLIST_URL
+        raw = merge({"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
+                     "limits":{"event_retry_seconds":60},
+                     "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
+                                "gfwlist_cache":"data/gfwlist.txt", "gfwlist_refresh_hours":6,
+                                "direct_domains":list(DIRECT_DOMAINS)}},raw)
         override = yaml.safe_load(self.local_path.read_text(encoding="utf-8")) if self.local_path.exists() else {}
         if override and not isinstance(override, dict):
             raise ValueError("本地覆盖配置必须为对象")
@@ -179,6 +184,22 @@ class Config:
             if url.scheme not in {"http", "https"} or not url.hostname or url.username:
                 raise ValueError("模型地址需要为无内嵌凭证的 http(s) 地址")
         network = data.get("network", {})
+        if not isinstance(network, dict) or set(network) - {"proxy_enabled", "proxy_url", "proxy_mode", "gfwlist_url", "gfwlist_cache", "gfwlist_refresh_hours", "direct_domains"}:
+            raise ValueError("未知的网络设置")
+        if network.get("proxy_mode", "gfwlist") not in {"gfwlist", "all"}:
+            raise ValueError("代理模式需要为 gfwlist 或 all")
+        hours = network.get("gfwlist_refresh_hours", 6)
+        if type(hours) is not int or not 1 <= hours <= 168:
+            raise ValueError("代理规则刷新间隔需要为 1 至 168 小时")
+        source = urlparse(network.get("gfwlist_url", "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt"))
+        if source.scheme != "https" or not source.hostname or source.username or source.password or source.fragment:
+            raise ValueError("代理规则来源需要为无内嵌凭证的 HTTPS 地址")
+        cache = network.get("gfwlist_cache", "data/gfwlist.txt")
+        if not isinstance(cache, str) or not cache.strip():
+            raise ValueError("代理规则缓存路径不能为空")
+        domains = network.get("direct_domains", [])
+        if not isinstance(domains, list) or len(domains) > 100 or any(not isinstance(d, str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", d) or ".." in d for d in domains):
+            raise ValueError("直连域名需要为不带协议或路径的小写域名列表")
         if type(network.get("proxy_enabled", False)) is not bool:
             raise ValueError("代理开关必须为 true 或 false")
         proxy = network.get("proxy_url", "")
@@ -292,6 +313,14 @@ class Config:
         network = self.data.get("network", {})
         return network.get("proxy_url", "") if network.get("proxy_enabled", False) else ""
 
+    @property
+    def network_proxy(self):
+        from murasamebot.adapters.network import ProxyPolicy
+        network = self.data["network"]
+        return ProxyPolicy(proxy_url=self.proxy_url, mode=network["proxy_mode"],
+                           source_url=network["gfwlist_url"], cache_file=(self.root / network["gfwlist_cache"]).resolve(),
+                           refresh_hours=network["gfwlist_refresh_hours"], direct_domains=tuple(network["direct_domains"]))
+
     def save_local(self, patch: dict):
         # The local dashboard can change non-secret product controls only.
         patch = deepcopy(patch)
@@ -300,6 +329,8 @@ class Config:
         allowed = {"mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
+        if set(patch.get("network", {})) - {"proxy_enabled", "proxy_url", "proxy_mode", "gfwlist_refresh_hours", "direct_domains"}:
+            raise ValueError("规则来源和缓存路径请在本地配置文件中管理")
         if set(patch.get("artwork", {})) - {"enabled", "delivery", "times", "weekdays", "grace_minutes", "candidate_limit", "max_caption_characters", "keywords", "sources"}:
             raise ValueError("来源密钥和转载授权请在本地配置文件中管理")
         if set(patch.get("vision", {})) - {"enabled", "max_images", "detail"}:
