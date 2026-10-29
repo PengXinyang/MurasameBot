@@ -101,7 +101,7 @@ def test_manual_retry_does_not_duplicate_a_later_accepted_comment_on_same_conten
     a=message(e,now,kind="owner_comment")
     s.enqueue_action(a,draft=False,now=now)
     p.receipt=Receipt("failed",detail="确定失败");e.dispatch_one(now)
-    later=replace(a,action_id="later-comment",kind="browse_comment",text="这期内容甚是有趣。")
+    later=replace(a,action_id="later-comment",kind="browse_comment",text="这期内容甚是有趣。",memory_epoch=s.get_setting("memory_epoch",0))
     assert s.enqueue_action(later,draft=False,now=now+2)
     p.receipt=Receipt("accepted","later-id");e.dispatch_one(now+2)
     with pytest.raises(ValueError,match="重复入队"):e.queue_manual_send(a.action_id,now+5)

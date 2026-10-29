@@ -147,7 +147,8 @@ def test_dynamic_can_like_without_reply_and_never_coin(factory, now):
 
 def test_browsing_reactions_wait_for_browsing_window(factory, now):
     engine, store, model, platform = factory(video_coin=True, browsing_enabled=False)
-    engine._queue_reactions(platform.read(platform.ref), now, True)
+    engine._queue_reactions(platform.read(platform.ref), now, True,memory_epoch=store.get_setting("memory_epoch",0))
+    assert len(store.inspect("actions"))==1
     assert not engine.dispatch_one(now)
 
 

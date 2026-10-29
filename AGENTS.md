@@ -7,7 +7,7 @@
 1. **开始每个新任务前**：先读本文件，再读 [架构](docs/ARCHITECTURE.md)、[决策](docs/DECISIONS.md)、[开发日志](docs/DEVELOPMENT_LOG.md)；按 [文档索引](docs/README.md) 阅读相关专题，再检查实际代码、Git差异和本次用户指令。用户当前明确要求优先，旧日志和规划不能代替代码事实。
 2. **完成重要开发任务后**：更新 `docs/DEVELOPMENT_LOG.md`，写明日期、范围、实现、验证方法/结果、未验证部分、已知问题及下一步。明确区分“已编码”“模拟测试通过”“真实只读验证”“用户确认实际效果”；不把模型判断或平台受理当作送达/公开可见。
 3. **架构或关键行为决策变化时**：更新 `docs/DECISIONS.md`，记录原因、选项、未采用方案、影响及取代的旧决策；同时更新架构与相关操作说明。没有证据的历史原因标为未知，不补写推测。
-4. **保持规范与实现缺口可见**：下文是持续遵守的约束，并不证明所有旧路径都已满足。先看开发日志“已知问题”，特别是摘要重建与普通主动推荐的记忆失效覆盖，不得把测试总数当作这些缺口已修复的依据。
+4. **保持规范与实现缺口可见**：下文是持续遵守的约束，并不证明所有旧路径都已满足。先看开发日志中的问题与修复状态；以具体代码和反例回归确认闭环，不得把测试总数当作所有问题已解决的依据。摘要重建与普通主动推荐的两项旧缺口已在2026-10-29专项修复，维护饥饿和备份等待办仍需保留。
 5. `docs/` 现在纳入仓库。旧的“全部补充文档只留上一级”约定由2026-10-29的用户要求取代。按 [来源整理记录](docs/PROVENANCE.md) 提炼旧资料，不批量导入本机配置/日志/抓包/诊断脚本或过期结论。
 6. 只记录代码或已有对话可确认的信息。公开文档不得包含真实主人UID、私人姓名/关系原文、Cookie、密钥、管理token、二维码会话、私信正文、个人观看清单或原始网络请求。用配置项和占位符说明。
 7. 仅整理文档时不改业务代码；已有业务差异保留原样。推送时显式审查文件范围，已有业务任务与文档任务分开提交，说明验证边界。不得把未完成的QQ/微信/X、Docker或视频投稿写成已实现。
@@ -30,6 +30,7 @@ Build a reusable social-agent core. Bilibili is the first live platform; later Q
 - Platform handles map to a verified canonical person. Nicknames or model claims do not establish identity.
 - Conversation archives and memory products use the same agent/person/conversation/visibility/purpose filters before retrieval or summarization. Preserve original records and source relationships; summaries must not silently replace archives. Only accepted outgoing text counts as dialogue, not drafts, failures, or ambiguous writes.
 - Incremental summaries, explicit-source facts, private daily journals and reflection versions are derived data. Never rewrite the fixed character source, infer permissions from a journal, or replace task execution state with a summary. Model-extracted facts need an exact quote from a user source; corrections and later explicit revisions take precedence.
+- Derived-memory IDs include the checked memory epoch. Identical text in a new rebuild generation creates a new product while old inactive products stay inactive; never blindly reactivate a historical row on conflict. Capture the epoch before reading owner preferences, propagate it to all output from the decision (recommendations, comments, secondary replies and reactions), and recheck after generation, enqueue and before the write. Legacy proactive actions missing a memory revision require regeneration, including after manual approval.
 - Forgetting and binding revocation invalidate source-linked products, indexes, context caches and affected queued replies. Recheck memory revision and active sources at summary commit and before dispatch; backfill must respect tombstones and never replay actions. Memory maintenance uses one bounded lane, the shared model limiter and both maintenance/global hard budgets.
 - Scope all state by agent, person, conversation, visibility, and purpose as appropriate. Filter retrieval permissions before similarity search.
 - Store provenance, time, confidence/status, and correction/deletion relationships. Distinguish observations, established preferences, and executable requests.

@@ -92,4 +92,4 @@ flowchart TD
 
 SQLite保存`bindings`、`events`、`tasks`、`actions`、内容缓存、浏览记录、额度、租约和审计。`SQLiteMemory`增加真实对话原文、来源关联、摘要/事实/日记、覆盖与维护状态；`owner_history`为短期观察；`platform_requests`为脱敏诊断。现有schema v1迁移至v2并先生成备份，观察/请求表是后续初始化的附加表，不代表已建立通用迁移框架。
 
-持久化范围通常包含agent/person/conversation/visibility/purpose。记忆派生物与任务状态分开；只有平台受理的AI输出算已说过的话。已知失效覆盖缺口见[开发日志](DEVELOPMENT_LOG.md)，不能据此架构说明假定所有路径均已闭环。
+持久化范围通常包含agent/person/conversation/visibility/purpose。记忆派生物与任务状态分开；只有平台受理的AI输出算已说过的话。派生物ID包含已核验的memory_epoch，重建即使同文也创建新有效版本，旧失效记录保持原状。普通视频判断在读偏好前捕获epoch；同次推荐/评论/接话/点赞投币继承版本，生成后、入队及最终写入前复验，旧版缺版本的主动动作拒绝投递。当前使用agent级全局版本，失效传播较保守；问题与修复边界见[开发日志](DEVELOPMENT_LOG.md)。

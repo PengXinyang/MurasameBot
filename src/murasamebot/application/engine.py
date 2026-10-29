@@ -359,7 +359,7 @@ class SocialEngine:
             document = replace(document,topic_class=topic)
         if result.get("decision") == "skip":
             if document:
-                self._queue_reactions(document, now, result.get("interested") is True, event=event)
+                self._queue_reactions(document, now, result.get("interested") is True, event=event,memory_epoch=result["_memory_epoch"])
             return
         text, emojis = self.message_text(result, options, self.settings.max_comment_characters)
         action = Action(
@@ -379,7 +379,7 @@ class SocialEngine:
         if document:
             # Publish the response decision before optional reactions become
             # claimable, so the sender cannot spend the minute on a coin first.
-            self._queue_reactions(document, now, result.get("interested") is True, event=event)
+            self._queue_reactions(document, now, result.get("interested") is True, event=event,memory_epoch=result["_memory_epoch"])
 
     def _owner_repost(self, event: Event, now: float) -> None:
         binding = self.store.binding(self.settings.owner_person_id, event.platform)
@@ -411,7 +411,7 @@ class SocialEngine:
                         dedup_key=f"repost:{event.content.key}", decision_reason="转发已验证主人的新内容", emojis=emojis,topic_class=topic)
         self.enqueue_generated(action,result,now)
 
-    def _queue_reactions(self, document: Document, now: float, interested: bool, *, event: Event | None = None) -> None:
+    def _queue_reactions(self, document: Document, now: float, interested: bool, *, memory_epoch: int, event: Event | None = None) -> None:
         if document_topic(document) == "sensitive":
             return
         if not interested or not self.can_evaluate(document):
@@ -433,7 +433,8 @@ class SocialEngine:
                             now + self.settings.action_ttl_minutes * 60, kind=kind, context=document.parent,
                             amount=1 if kind == "coin" else 0, proactive=event is None,
                             event_id=event.event_id if event else "", evidence_level=document.evidence_level,
-                            decision_reason="根据实际读取的内容判断感兴趣", dedup_key=f"{kind}:{target.key}", topic_class=document.topic_class)
+                            decision_reason="根据实际读取的内容判断感兴趣", dedup_key=f"{kind}:{target.key}", topic_class=document.topic_class,
+                            memory_epoch=memory_epoch)
             self.store.enqueue_action(action, draft=self.settings.draft, now=now)
 
     def run_due_task(self, now: float | None = None) -> bool:
@@ -533,13 +534,16 @@ class SocialEngine:
             self.store.record_view(document.ref,"话题限制：跳过严肃或敏感内容",now)
             return False
         # This payload is deliberately independent of the original private message.
+        # Capture before preferences are read, so concurrent forgetting/correction
+        # invalidates the whole decision, not just the eventual recommendation.
+        epoch = owner_observation["memory_epoch"] if owner_observation else self.store.get_setting("memory_epoch",0)
         readable = replace(document, comments=tuple(c for c in document.comments if c.get("author_id") != self.settings.account_id))
         result, options = self.message_decision("evaluate_video", {
             "persona": self.persona.prompt(), "content": readable.public_context(),
             "interests": list(self.settings.interests), "owner_interests": list(self.settings.owner_interests),
             "owner_preferences": [row for row in self.store.memory(self.settings.owner_person_id, "person", "owner_video_recommendation", now) if row["kind"] == "preference"],
             "requested_topic": task["topic"] if task else owner_observation["topic"] if owner_observation else None,
-            **({"memory_epoch":owner_observation["memory_epoch"]} if owner_observation else {}),
+            "memory_epoch": epoch,
             "max_characters": self.settings.max_recommendation_characters if task else self.settings.max_comment_characters,
             "comment_videos": self.settings.comment_videos and not owner_observation, "reply_comments": self.settings.reply_comments and task is None and not owner_observation,
             "recommend_owner": self.settings.recommend_owner,
@@ -559,11 +563,11 @@ class SocialEngine:
         if owner_observation and decision not in {"recommend","skip"}:
             return False
         if not owner_observation:
-            self._queue_reactions(document, now, result.get("interested") is True)
+            self._queue_reactions(document, now, result.get("interested") is True,memory_epoch=result["_memory_epoch"])
         extra = result.get("comment_reply")
         if not owner_observation and task is None and decision != "reply" and self.settings.reply_comments and isinstance(extra, dict) and extra.get("reply_to"):
             try:
-                self._queue_browse_reply(readable, extra, options, now)
+                self._queue_browse_reply(readable, extra, options, now,memory_epoch=result["_memory_epoch"])
             except PolicyError:
                 self.store.audit("browse_reply_skipped", "额外接话目标或正文无效，未生成评论区回复", now)
         if decision == "skip":
@@ -571,7 +575,7 @@ class SocialEngine:
         if task and decision != "recommend":
             return False
         if decision == "reply":
-            return self._queue_browse_reply(readable, result, options, now) if self.settings.reply_comments else False
+            return self._queue_browse_reply(readable, result, options, now,memory_epoch=result["_memory_epoch"]) if self.settings.reply_comments else False
         if decision == "comment" and not self.settings.comment_videos or decision == "recommend" and not self.settings.recommend_owner:
             return False
         if decision == "recommend" and (not binding or binding["external_id"] == document.author_id):
@@ -594,13 +598,13 @@ class SocialEngine:
             topic_class=topic,
             owner_activity_version=owner_observation["version"] if owner_observation else "",
             owner_activity_sources=owner_observation["sources"] if owner_observation else (),
-            memory_epoch=result["_memory_epoch"] if owner_observation else -1,
+            memory_epoch=result["_memory_epoch"],
         )
         if owner_observation and self.owner_activity and self.owner_activity.guard(action,now):
             return False
         return self.enqueue_generated(action,result,now)
 
-    def _queue_browse_reply(self, document, result, options, now):
+    def _queue_browse_reply(self, document, result, options, now, *, memory_epoch: int):
         target = next((c for c in document.comments if c.get("id") == str(result.get("reply_to", "")) and c.get("author_id") != self.settings.account_id), None)
         if target is None:
             raise PolicyError("只能回复实际读取的其他用户评论")
@@ -616,7 +620,7 @@ class SocialEngine:
                         now+self.settings.action_ttl_minutes*60, kind="browse_reply", reply_to=target["id"], thread_root=root,
                         evidence_level=document.evidence_level, emojis=emojis, proactive=True, topic_class=topic,
                         conversation_id=f"{document.ref.provider}:{self.settings.account_id}:{document.ref.key}:thread:{root}",
-                        decision_reason="主动回应已读取的评论", dedup_key=f"browse_reply:{document.ref.key}:{target['id']}")
+                        decision_reason="主动回应已读取的评论", dedup_key=f"browse_reply:{document.ref.key}:{target['id']}",memory_epoch=memory_epoch)
         return self.enqueue_generated(action,result,now)
 
     def review_one(self, now: float | None = None) -> bool:

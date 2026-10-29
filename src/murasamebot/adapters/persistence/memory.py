@@ -242,7 +242,9 @@ class SQLiteMemory:
                 sources = sorted(set(product["sources"]))
                 if not sources or not set(sources)<=allowed:
                     raise ValueError("记忆来源无效")
-                pid = stable_id(self.agent_id,kind,product["kind"],sources,product["text"])
+                # A rebuild is a new generation even if the model produces the
+                # same text. Never reactivate a deleted/superseded historical row.
+                pid = stable_id(self.agent_id,kind,product["kind"],sources,product["text"],epoch)
                 db.execute("INSERT OR IGNORE INTO memory_products VALUES(?,?,?,?,?,?,?,?,1,0,'')", (self.agent_id,pid,first["person_id"],first["scope"],first["purpose"],product["kind"],product["text"],now))
                 for rid in sources:
                     db.execute("INSERT OR IGNORE INTO memory_sources VALUES(?,?,?)", (self.agent_id,pid,rid))

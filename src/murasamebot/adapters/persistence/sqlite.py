@@ -373,6 +373,9 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
             return result.rowcount == 1
 
     def _validate_action(self, db, action, now):
+        if action.memory_epoch < 0 and (action.kind in {"recommendation","browse_comment","browse_reply"}
+                or action.kind in {"like","coin"} and action.proactive):
+            return "memory_revision_missing"
         if action.memory_epoch >= 0 and action.memory_epoch != self._memory_epoch(db):
             return "memory_sources_invalidated"
         if action.agent_id != self.agent_id:
