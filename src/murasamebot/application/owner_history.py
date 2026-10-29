@@ -17,6 +17,7 @@ class OwnerHistorySettings:
     window_minutes: int = 120
     context_limit: int = 12
     use_for_private: bool = True
+    diary_enabled: bool = True
     playful_jealousy: bool = False
     recommendations_enabled: bool = False
     recommendation_topics: tuple = ("galgame", "千恋万花")
@@ -97,6 +98,28 @@ class OwnerHistoryService:
 
     def private_context(self, person_id, now):
         return self._observations(person_id,now) if self.settings.use_for_private else {}
+
+    def diary_context(self, now, cutoff, limit):
+        grant = self._grant_version()
+        if not grant or not self.settings.diary_enabled:
+            return {}
+        rows = self.store.observation_diary_batch(self.person_id,now,cutoff,self.settings.retention_days,min(limit,self.settings.context_limit))
+        if not rows:
+            return {}
+        binding = self.store.binding(self.person_id,self.platform)
+        state = self.store.owner_history_state(self.person_id)
+        if not binding or self._grant_version()!=grant:
+            return {}
+        return {"records":rows,"person_id":self.person_id,"platform":self.platform,
+                "binding_version":binding["version"],"external_id":binding["external_id"],
+                "revision":state["revision"],"auth":state["auth"],"grant":grant}
+
+    def diary_authorized(self):
+        return bool(self.settings.diary_enabled and self._grant_version())
+
+    def diary_valid(self, context, now):
+        return bool(self.settings.diary_enabled and self._grant_version()==context["grant"] and
+                    len(self.store.owner_history_sources(self.person_id,tuple(r["record_id"] for r in context["records"]),now,self.settings.retention_days))==len(context["records"]))
 
     def guard(self, action, now):
         if not action.owner_activity_version:

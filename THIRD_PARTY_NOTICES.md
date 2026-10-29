@@ -68,3 +68,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+Video-preview design references checked on 2026-10-29: `YZz-S/dsh-bili-summary` at `81b7a0e2991e311b74de22b5414dcdbdac5648aa` (videoshot sprites, crops and fallback), `realysy/bili-apis/docs/video/snapshot.md` (community endpoint/time-index fields), and `Alterssss/dsh-bili-whale` at `8b0009f8ce2ebdc421afcb2e727b19ac18912ec6` (temporal coverage). The Python/Pillow sampler and crop pipeline were independently implemented; no upstream implementation source, Node/sharp/DSH runtime, FFmpeg binary or video downloader is copied or required. See `docs/VIDEO_VISION.md`.

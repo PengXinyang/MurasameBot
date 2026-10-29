@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from murasamebot.application.scheduling import day_start, next_window
 from murasamebot.domain.models import Action, Event, ModelError, PlatformError, PolicyError, stable_id
+from murasamebot.domain.topics import blocked, combined_topic, local_topic
 
 
 KINDS = {"dynamic": "autonomous_post", "private": "proactive_private"}
@@ -100,10 +101,14 @@ class AutonomyService:
                     continue
                 key = "autonomy_status:" + channel
                 state = e.store.get_setting(key, {})
-                if state.get("version") == s.version() and now < state.get("next_at", 0):
+                social = e.social.context(channel="initiative_private" if channel=="private" else "dynamic",now=now,due_only=True)
+                social_clock = stable_id(social)
+                social_due = bool(social["states"] and social_clock != state.get("social_clock"))
+                if state.get("version") == s.version() and now < state.get("next_at", 0) and not social_due:
                     continue
                 due = s.open_at(now, e.settings.timezone)
                 status = {"version": s.version(), "at": now, "next_at": max(due, now + s.decision_interval_minutes * 60), "state": "waiting"}
+                status["social_clock"] = social_clock
                 e.store.set_setting(key, status)
                 if due != now:
                     continue
@@ -144,12 +149,14 @@ class AutonomyService:
                     e.store.set_setting(budget_key, used + 1)
                     result, options = e.message_decision("autonomous_private" if channel == "private" else "autonomous_post", {
                         "persona": e.persona.prompt(channel == "private", private=channel == "private"),
-                        **context, "topics": list(s.topics),
+                        **context, "topics": list(s.topics), "social_context":social,
                         "recent_public_posts": e.store.autonomy_recent_public() if channel == "dynamic" else [],
                         "current_time": datetime.fromtimestamp(now, ZoneInfo(e.settings.timezone)).isoformat(),
                         "max_delay_minutes": s.max_delay_minutes,
                         "max_characters": s.max_post_characters if channel == "dynamic" else e.settings.max_private_characters,
                     }, e.settings.platform, e.settings.account_id, "private" if channel == "private" else "dynamic", now)
+                    if channel == "private":
+                        e.social.capture(result,person=e.settings.owner_person_id,context=context,social_context=social,now=now)
                     if result.get("decision") == "skip":
                         status["state"] = "skipped"
                         continue
@@ -163,6 +170,12 @@ class AutonomyService:
                         status["state"] = "outside_window"
                         continue
                     text, emojis = e.message_text(result, options, s.max_post_characters if channel == "dynamic" else e.settings.max_private_characters)
+                    if channel == "dynamic" and social["states"] and blocked(combined_topic(local_topic(text),result.get("topic_class"))):
+                        status["state"] = "topic_blocked"
+                        continue
+                    followups = e.social.followups(result,social)
+                    if social["states"] and not followups:
+                        raise ModelError("社交主动消息未标明实际采用的状态ID")
                     if e.store.autonomy_text_exists(kind, text):
                         status["state"] = "duplicate_skipped"
                         continue
@@ -175,7 +188,10 @@ class AutonomyService:
                         subject_person_id=e.settings.owner_person_id if binding else "", binding_version=binding["version"] if binding else 0,
                         decision_reason="自主择时私信" if channel == "private" else "自主文字动态", memory_epoch=result["_memory_epoch"],
                         owner_activity_version=context.get("owner_activity_version", ""),
-                        owner_activity_sources=context.get("owner_activity_sources", ()))
+                        owner_activity_sources=context.get("owner_activity_sources", ()),
+                        social_refs=e.social.references(social),social_followups=followups,
+                        social_version=e.settings.social.version(),social_gap_seconds=e.settings.social.followup_gap_minutes*60,
+                        topic_class=result.get("topic_class","unknown"))
                     if e.owner_activity and e.owner_activity.guard(action,now):
                         status["state"] = "invalidated"
                         continue

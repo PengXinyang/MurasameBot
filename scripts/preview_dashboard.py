@@ -41,8 +41,14 @@ def main():
                           "今天有点累，想聊一会儿。", stamp, visibility="private", reply_to="100", sequence=1)
     preview_store.enqueue_event(preview_event)
     preview_store.finish_event(preview_event.event_id, "done")
+    from murasamebot.application.social import SocialService
+    SocialService(preview_store).capture({"social_update":{"attention":"later","source":"message","quote":"想聊一会儿",
+        "summary":"模拟主人说想聊一会儿。","owner_related":True,"feeling":"miss_owner","intensity":1,
+        "note":"吾辈想陪主人聊聊，也可以在自己的动态里轻轻撒个娇。","followup_minutes":15,
+        "followup_channel":"either","resolve_ids":[]}},event=preview_event,person="owner",now=stamp)
     records=preview_store.memory_records("owner",f"conversation:bilibili:{preview_event.conversation_id}","private_dialogue")
     preview_store.memory_commit(records,[{"kind":"summary","text":"主人今天有点累，想有人陪着聊一会儿；这是一次聊天，不是找视频委托。","sources":[records[0]["record_id"]]},
+        {"kind":"diary","text":"今天的日记里，吾辈想记下认真陪伴的小小心意。","sources":[records[0]["record_id"]]},
         {"kind":"reflection","text":"今天的陪伴适合慢一点，先认真听主人说话。","sources":[records[0]["record_id"]]}],"diary",0,stamp)
     preview_store.memory_job("preview-review","diary","done",stamp)
     preview_store.set_setting("memory_health",{"state":"ready","at":stamp})
@@ -96,9 +102,17 @@ def main():
                        ("actions", "private", 390, 1280, output.parent / "mobile-private-actions-preview.png"),
                        ("actions", "reactions", 390, 1280, output.parent / "mobile-reaction-actions-preview.png"),
                        ("memories", "browsing", 1440, 1500, output.parent / "memory-preview.png"),
+                       ("diary", "browsing", 1440, 1100, output.parent / "diary-preview.png"),
+                       ("reflections", "browsing", 1440, 1100, output.parent / "reflections-preview.png"),
+                       ("owner-history", "browsing", 1440, 1500, output.parent / "owner-history-preview.png"),
+                       ("diary", "browsing", 390, 1280, output.parent / "mobile-diary-preview.png"),
+                       ("reflections", "browsing", 390, 1280, output.parent / "mobile-reflections-preview.png"),
+                       ("owner-history", "browsing", 390, 1500, output.parent / "mobile-owner-history-preview.png"),
                        ("overview", "browsing", 390, 1280, output.parent / "mobile-preview.png"),
                        ("settings", "messages", 390, 1280, output.parent / "mobile-settings-preview.png"),
-                       ("memories", "browsing", 390, 1280, output.parent / "mobile-memory-preview.png")]
+                       ("memories", "browsing", 390, 1280, output.parent / "mobile-memory-preview.png"),
+                       ("social", "browsing", 1440, 1450, output.parent / "social-preview.png"),
+                       ("social", "browsing", 390, 1750, output.parent / "mobile-social-preview.png")]
             plan = {"browser": str(browser), "profile": str(review / ("cdp-" + uuid4().hex[:8])),
                     "url": f"http://127.0.0.1:{server.server_port}/#token=preview-token",
                     "report": str(output.parent / "dashboard-browser-checks.json"),

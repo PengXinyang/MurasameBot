@@ -18,6 +18,7 @@ from PIL import Image
 from murasamebot.adapters.network import client as network_client
 from murasamebot.adapters.platforms.bilibili_private import BilibiliPrivateMixin
 from murasamebot.adapters.platforms.bilibili_comments import read_comment_chain
+from murasamebot.adapters.platforms.bilibili_frames import VideoShotReader
 from murasamebot.adapters.platforms.bilibili_emojis import BilibiliEmojiMixin
 from murasamebot.adapters.platforms.bilibili_publication import BilibiliPublicationMixin, classify_comment
 
@@ -68,7 +69,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                  max_age_hours: int = 24, client: httpx.Client | None = None,
                  proxy_url: str = "", image_client: httpx.Client | None = None,
                  private_session_pages: int = 3, private_message_pages: int = 3, private_max_age_hours: int = 24,
-                 read_video_subtitles: bool = True, inbox_batch_limit: int = 90, proactive_recipient_id: str = "", monitor=None):
+                 read_video_subtitles: bool = True, inbox_batch_limit: int = 90, proactive_recipient_id: str = "", monitor=None,
+                 video_frames_enabled: bool = False, video_frame_count: int = 6, video_frame_max_parts: int = 3,
+                 frame_cache_minutes: int = 1440, frame_retry_minutes: int = 10):
         self.monitor = monitor
         self.credentials_path = credentials_path
         self.expected_uid = str(expected_uid or "")
@@ -92,6 +95,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         self._sync_cookies()
         self._wbi_key: tuple[str, float] | None = None
         self._account: dict | None = None
+        self.video_frames_enabled = video_frames_enabled
+        self.video_frames = VideoShotReader(self._request, count=video_frame_count, max_parts=video_frame_max_parts,
+                                            cache_minutes=frame_cache_minutes, retry_minutes=frame_retry_minutes)
 
     def warn_inbox(self, source: str, detail: str):
         self.poll_warnings.append({"source": source, "detail": detail})
@@ -413,6 +419,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         if ref.provider != "bilibili" or ref.kind not in set(COMMENT_TYPES) | {"post"}:
             raise PlatformError("不支持的内容引用")
         oid = numeric(ref.external_id)
+        frame_images, frame_context = (), None
         if ref.kind == "video":
             data, _ = self._request("/x/web-interface/view", params={"aid": oid})
             bvid = str(data.get("bvid", ""))
@@ -440,6 +447,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             body = ("视频简介：\n" + description + "\n取得的字幕（最多前3个分P，可能不完整）：\n" + transcript) if transcript else description
             title, author, category = plain(data.get("title")), str((data.get("owner") or {}).get("mid", "")), str(data.get("tid", ""))
             url = "https://www.bilibili.com/video/" + bvid
+            if self.video_frames_enabled and local_topic(title, body) != "sensitive":
+                frame_images, frame_context = self.video_frames.read(data)
         else:
             if ref.kind in {"dynamic", "post", "draw"}:
                 post_id = oid
@@ -475,10 +484,10 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             comments, coverage = self._comment_chain(ref, reply_to, root)
         else:
             comments = self._comments(ref, "", "") if ref.kind != "post" else ()
-        images = self.dynamic_images(item) if ref.kind in {"dynamic", "post", "draw"} else ()
+        images = self.dynamic_images(item) if ref.kind in {"dynamic", "post", "draw"} else frame_images
         parent = ContentRef("bilibili", "post", post_id) if ref.kind in {"dynamic", "post", "draw"} else None
         return Document(ref, title, body[:20000], level, author, category, url, comments, images, parent=parent,
-                        comment_context=coverage)
+                        comment_context=coverage, frame_context=frame_context)
 
     @staticmethod
     def dynamic_images(item: dict) -> tuple[ImageRef, ...]:

@@ -74,7 +74,7 @@ flowchart TD
 5. `SQLiteStore.claim_action`事务领取，检查额度、时间、来源、任务/记忆版本等。实际写入串行。
 6. Runtime最终策略、Engine发送前校验及适配器再次核对身份/互关/来源。保留Receipt；unknown不自动重发。
 
-公开视频读取标题、简介、可得字幕，不下载整段视频。相关父链最多3页×20条加一次对话链补查，提供最多12条/6000字，保留AI祖先发言。动态视觉独立下载允许域名的真实图片，记录成功、部分和失败覆盖。
+公开视频读取标题、简介、可得字幕，并可通过`bilibili_frames.py`获取播放器预览快照；按分P和时间选帧，通用图片读取器裁出真实像素，`VisionService`用一次多图请求形成有覆盖限制的视觉证据。不下载整段视频；成功字幕与画面组合为`transcript_visual`，失败保留原文字等级。裁图缓存按批次隔离，内容缓存签名包含裁图坐标/时间/分P/配置，旧缓存按需刷新。详见[视频视觉](VIDEO_VISION.md)。相关父链最多3页×20条加一次对话链补查，提供最多12条/6000字，保留AI祖先发言。动态视觉独立下载允许域名的真实图片，记录成功、部分和失败覆盖。
 
 ### 自主计划与历史观察
 
@@ -92,4 +92,14 @@ flowchart TD
 
 SQLite保存`bindings`、`events`、`tasks`、`actions`、内容缓存、浏览记录、额度、租约和审计。`SQLiteMemory`增加真实对话原文、来源关联、摘要/事实/日记、覆盖与维护状态；`owner_history`为短期观察；`platform_requests`为脱敏诊断。现有schema v1迁移至v2并先生成备份，观察/请求表是后续初始化的附加表，不代表已建立通用迁移框架。
 
+观察日记由`MemoryService`在对话维护暂时无批次时调用，仍持有相同维护租约、共享模型并发和两层额度。`OwnerHistoryService`提供已授权、基线后新增、回顾截止时间内且未覆盖的观察；`observation_diary`模型操作只写中文感想。当前配置和来源在返回后复验，SQLite事务核验授权/绑定/记忆版本及来源，存为`memory_products(kind=diary, scope=observation:<平台>, purpose=owner_observation_diary)`；新增`observation_diary_sources`仅维护独立来源和覆盖，不伪造聊天归档。来源清除/撤权/过期会使正文失效并清除；这些产物不进入普通聊天检索或公开提示词。
+
+管理台新增独立`diary`、`reflections`、`owner-history`页面；`/api/memory/journals`按记忆、日记、相处回顾各自限量查询有效产物，避免一个板块挤占另一个的限额。观看历史授权、设置与记录仅放在“主人足迹”，源权限无效时不展示观察日记。来源弹窗位于页面外层，可在任意记忆板块使用。
+
 持久化范围通常包含agent/person/conversation/visibility/purpose。记忆派生物与任务状态分开；只有平台受理的AI输出算已说过的话。派生物ID包含已核验的memory_epoch，重建即使同文也创建新有效版本，旧失效记录保持原状。普通视频判断在读偏好前捕获epoch；同次推荐/评论/接话/点赞投币继承版本，生成后、入队及最终写入前复验，旧版缺版本的主动动作拒绝投递。当前使用agent级全局版本，失效传播较保守；问题与修复边界见[开发日志](DEVELOPMENT_LOG.md)。
+
+### 社交线索与短期角色状态
+
+`SocialEngine`把程序筛选的`social_context`提供给原回复调用，同次可返回`social_update`。`SocialService`校验精确来源摘录、身份、可见性和可选澄清ID；`SQLiteSocial`在`social_events/role_states`中保存归因与短期反应，独立于事实/偏好/日记。动态正文/相关父评论、真实视觉和授权观看可作来源；观看依赖沿用原授权/记录ID，第三方私聊保持同人同会话隔离。
+
+`AutonomyService`在原后台通道选择到期角色状态，决定私信/动态或skip，保存原Action中的`social_refs/social_followups/social_version`，不新增轮询或发送器。公开来源可提供摘录，主人私人来源只提供感受标签和限制；独立审核也不接收原私密来源。源、状态及配置在生成后/入队/领取/最终写入前核验；平台受理才增加累计提起次数。管理台独立“心情与线索”页面通过鉴权`/api/social`及仅结束/遗忘的`/api/social/manage`管理，操作不直接发平台消息。详见[社交状态](SOCIAL_STATES.md)。

@@ -233,12 +233,17 @@ def build(config: Config, *, concurrency=None) -> Runtime:
     history_reader = history_source(config,store)
     history = history_service(config,store,history_reader)
     b = config.data["bilibili"]
+    v = config.data.get("vision", {})
     platform = BilibiliAdapter((config.root / b["credentials"]).resolve(), expected_uid=str(b.get("robot_uid", "")),
                                pages=b["notification_pages"], max_age_hours=b["notification_max_age_hours"], proxy_url=config.network_proxy,
                                private_session_pages=b.get("private_session_pages", 3), private_message_pages=b.get("private_message_pages", 3),
                                private_max_age_hours=b.get("private_message_max_age_hours", 24),
                                read_video_subtitles=b.get("read_video_subtitles", True), inbox_batch_limit=b.get("inbox_batch_limit", 90),
-                               proactive_recipient_id=(store.binding(config.data["owner_person_id"], "bilibili") or {}).get("external_id", ""), monitor=monitor)
+                               proactive_recipient_id=(store.binding(config.data["owner_person_id"], "bilibili") or {}).get("external_id", ""), monitor=monitor,
+                               video_frames_enabled=v.get("enabled", True) and v.get("video_frames_enabled", True),
+                               video_frame_count=min(v.get("video_frame_count", 6), v.get("max_images", 9)),
+                               video_frame_max_parts=v.get("video_frame_max_parts", 3),
+                               frame_cache_minutes=v.get("cache_minutes", 1440), frame_retry_minutes=v.get("failure_retry_minutes", 10))
     m = config.data["model"]
     model = ChatCompletionsModel(base_url=m["base_url"], name=m["name"], api_key=m["api_key"], store=store,
                                  timezone=config.data["timezone"], daily_limit=m["daily_call_limit"],
@@ -249,7 +254,7 @@ def build(config: Config, *, concurrency=None) -> Runtime:
         LOG.warning("源人设已变化：请复核 character/text_profile.yml，现有记忆与任务保留")
     v = config.data.get("vision", {})
     vision_settings = VisionSettings(**{key: v[key] for key in VisionSettings.__dataclass_fields__ if key in v})
-    reader = HTTPImageReader(hosts=tuple(v.get("allowed_image_hosts", ["i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com"])), proxy_url=config.network_proxy)
+    reader = HTTPImageReader(hosts=tuple(v.get("allowed_image_hosts", ["i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com", "bimp.hdslb.com"])), proxy_url=config.network_proxy)
     resources = [reader, history_reader]
     vision_model = model
     if v.get("base_url") or v.get("name") or v.get("api_key"):
@@ -267,6 +272,12 @@ def build(config: Config, *, concurrency=None) -> Runtime:
                     kaomoji_enabled=e.get("kaomoji_enabled",True)), {"bilibili": platform}, store)
     def action_policy(action: Action, now: float) -> str:
         current = Config(config.path)
+        if action.social_refs:
+            from murasamebot.application.social import SocialService, SocialSettings
+            reason = SocialService(store,SocialSettings(**current.data["social"]),owner_person_id=current.data["owner_person_id"],
+                                   observations=history_service(current,store,history_reader)).guard(action,now)
+            if reason:
+                return reason
         if action.visibility == "public" and action.content:
             event = store.event(action.event_id) if action.event_id else None
             document = store.cached_document(action.content,now)
@@ -324,7 +335,9 @@ def build(config: Config, *, concurrency=None) -> Runtime:
     engine = SocialEngine(config.behaviour(platform.account_id), store, model, persona,
                            {"bilibili": platform}, {"bilibili": platform}, action_policy=action_policy,
                            private_access={"bilibili": platform}, vision=vision, expressions=expressions, owner_activity=history,
-                           memory=MemoryService(store,model,MemorySettings(**config.data.get("memory",{})),timezone=config.data["timezone"]))
+                           memory=MemoryService(store,model,MemorySettings(**config.data.get("memory",{})),timezone=config.data["timezone"],
+                                                observations=history,persona=persona.prompt(True,private=True),
+                                                observation_guard=lambda context,now: history_service(Config(config.path),store,history_reader).diary_valid(context,now)))
     a = config.data.get("artwork", {})
     sources = {}
     for source in a.get("sources", []):

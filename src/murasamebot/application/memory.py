@@ -29,10 +29,12 @@ class MemorySettings:
 
 class MemoryService:
     def __init__(self, store: MemoryRepository, model: ModelGateway, settings: MemorySettings | None = None,
-                 *, timezone="Asia/Hong_Kong"):
+                 *, timezone="Asia/Hong_Kong", observations=None, persona="", observation_guard=None):
         self.store, self.model = store, model
         self.settings = settings or MemorySettings()
         self.timezone = timezone
+        self.observations, self.persona = observations, persona
+        self.observation_guard = observation_guard
 
     def context(self, event, person, owner, now):
         epoch = self.store.get_setting("memory_epoch", 0)
@@ -91,6 +93,7 @@ class MemoryService:
         return sum(word.lower() in text.lower() for word in set(terms))
 
     def maintain(self, now=None):
+        live_clock = now is None
         now = time.time() if now is None else now
         if not self.settings.enabled or self.store.get_setting("paused",False):
             return False
@@ -123,7 +126,7 @@ class MemoryService:
                         min_messages=2147483647,recent=min(2,self.settings.recent_messages),
                         min_characters=int(self.settings.context_characters*self.settings.pressure_ratio))
             if not batch:
-                return False
+                return self._observation_diary(now,cutoff.timestamp(),live_clock=live_clock) if self.observations else False
             epoch = self.store.get_setting("memory_epoch",0)
             # Bound model input by complete messages, marking oversized originals.
             packed,used = [],0
@@ -218,3 +221,42 @@ class MemoryService:
         if not isinstance(value,str) or not value.strip() or len(value)>maximum or re.search(r"[\u3040-\u30ff]",value) or not re.search(r"[\u4e00-\u9fff]",value):
             raise PolicyError("记忆总结需为长度合适的中文")
         return value.strip()
+
+    def _observation_diary(self, now, cutoff, *, live_clock=False):
+        epoch = self.store.get_setting("memory_epoch",0)
+        context = self.observations.diary_context(now,cutoff,self.settings.batch_messages)
+        if not context:
+            return False
+        # Calendar days and complete records remain distinct; no raw observation
+        # is archived as dialogue, a fact, a preference or an executable task.
+        local = datetime.fromtimestamp(now,ZoneInfo(self.timezone))
+        first_day = datetime.fromtimestamp(context["records"][0]["viewed_at"],ZoneInfo(self.timezone)).date()
+        packed,used = [],0
+        for row in context["records"]:
+            if datetime.fromtimestamp(row["viewed_at"],ZoneInfo(self.timezone)).date()!=first_day:
+                break
+            cost=len(json.dumps(row,ensure_ascii=False))
+            if used+cost>self.settings.input_characters:
+                break
+            packed.append(row);used+=cost
+        if not packed:
+            return False
+        context={**context,"records":packed}
+        if not self.store.memory_reserve(local.date().isoformat(),self.settings.daily_call_limit):
+            self.store.set_setting("memory_health",{"state":"budget_exhausted","at":now})
+            return False
+        job=stable_id("observation_diary",epoch,[r["record_id"] for r in packed])
+        self.store.memory_job(job,"observation_diary","running",now)
+        try:
+            result=self.model.decide("observation_diary",{"persona":self.persona,"records":packed,
+                "observed_day":first_day.isoformat(),"language":"中文","max_characters":2000})
+            text=self._text(result.get("diary"),2000)
+            moment=time.time() if live_clock else now
+            valid=(self.observation_guard(context,moment) if self.observation_guard else self.observations.diary_valid(context,moment))
+            committed=bool(valid and self.store.observation_diary_commit(context,text,epoch,moment,self.observations.settings.retention_days))
+            self.store.memory_job(job,"observation_diary","done" if committed else "stale",now)
+            self.store.set_setting("memory_health",{"state":"ready" if committed else "stale","at":now})
+            return committed
+        except (ModelError,PolicyError,ValueError,KeyError,TypeError):
+            self.store.memory_job(job,"observation_diary","failed",now,"观察日记未完成，保留来源等待重试")
+            raise

@@ -76,9 +76,11 @@ SCHEMA_LOCK = Lock()
 
 from murasamebot.adapters.persistence.owner_history import SQLiteOwnerHistory, HISTORY_SCHEMA
 from murasamebot.adapters.persistence.requests import SQLiteRequests, REQUEST_SCHEMA
+from murasamebot.adapters.persistence.observation_diary import SQLiteObservationDiary, OBSERVATION_DIARY_SCHEMA
+from murasamebot.adapters.persistence.social import SQLiteSocial, SOCIAL_SCHEMA
 
 
-class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
+class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObservationDiary, SQLiteSocial):
     def __init__(self, path: str | Path, agent_id: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,9 +107,15 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
             if version != 2:
                 raise RuntimeError(f"不兼容的数据库版本：{version}")
             self._memory_index(db)
+            if (not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='social_events'").fetchone() or
+                    not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='role_states'").fetchone()):
+                db.executescript("BEGIN IMMEDIATE;\n"+SOCIAL_SCHEMA+"\nCOMMIT;")
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_history'").fetchone():
                 db.executescript(HISTORY_SCHEMA)
             db.execute("DELETE FROM owner_history WHERE expires_at<=?", (time.time(),))
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='observation_diary_sources'").fetchone():
+                db.executescript(OBSERVATION_DIARY_SCHEMA)
+            self._invalidate_observation_diaries(db,time.time())
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='platform_requests'").fetchone():
                 db.executescript(REQUEST_SCHEMA)
 
@@ -165,6 +173,11 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
         return dict(row) if row else None
 
     def _invalidate_person(self, db, person_id, platform):
+        for row in db.execute("SELECT social_id,payload FROM social_events WHERE agent_id=? AND active=1",(self.agent_id,)).fetchall():
+            source = json.loads(row["payload"])
+            if source.get("platform")==platform and person_id in {source.get("person_id"),source.get("subject_person_id")}:
+                self._social_forget_source(db,row["social_id"])
+        self._invalidate_observation_diaries(db,0,person_id=person_id,platform=platform)
         events = [r[0] for r in db.execute("SELECT event_id FROM conversation_records WHERE agent_id=? AND person_id=? AND platform=? AND active=1 UNION SELECT m.event_id FROM memories m JOIN events e ON e.agent_id=m.agent_id AND e.event_id=m.event_id WHERE m.agent_id=? AND m.person_id=? AND json_extract(e.payload,'$.platform')=?", (self.agent_id,person_id,platform,self.agent_id,person_id,platform))]
         self._invalidate_memory_sources(db,events)
         db.execute("UPDATE memories SET active=0 WHERE agent_id=? AND person_id=? AND event_id IN (SELECT event_id FROM events WHERE agent_id=? AND json_extract(payload,'$.platform')=?)", (self.agent_id,person_id,self.agent_id,platform))
@@ -373,6 +386,10 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
             return result.rowcount == 1
 
     def _validate_action(self, db, action, now):
+        if action.social_refs:
+            reason = self._social_validate(db,action,now)
+            if reason:
+                return reason
         if action.memory_epoch < 0 and (action.kind in {"recommendation","browse_comment","browse_reply"}
                 or action.kind in {"like","coin"} and action.proactive):
             return "memory_revision_missing"
@@ -526,6 +543,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
             action = Action.from_dict(json.loads(row[0]))
             if receipt.state == "accepted":
                 self._archive_action(db,action,now)
+                self._social_accepted(db,action,now,action.social_gap_seconds)
             if action.task_id:
                 task = db.execute("SELECT * FROM tasks WHERE agent_id=? AND task_id=?", (self.agent_id, action.task_id)).fetchone()
                 if task and task["state"] != "cancelled":
@@ -781,7 +799,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
             db.execute("INSERT INTO audit(agent_id,kind,detail,created_at) VALUES(?,?,?,?)", (self.agent_id, kind, detail[:1000], now))
 
     def inspect(self, table, limit=100):
-        allowed = {"bindings", "events", "memories", "tasks", "actions", "views", "audit", "model_usage", "model_daily", "conversation_records", "memory_products", "memory_jobs", "memory_sources", "memory_daily"}
+        allowed = {"social_events", "role_states", "bindings", "events", "memories", "tasks", "actions", "views", "audit", "model_usage", "model_daily", "conversation_records", "memory_products", "memory_jobs", "memory_sources", "memory_daily"}
         if table not in allowed:
             raise ValueError("不支持的数据表")
         with self.connection() as db:

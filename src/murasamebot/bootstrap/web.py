@@ -86,12 +86,14 @@ def handler_for(config_path: Path, token: str):
 
         def do_GET(self):
             path = urlparse(self.path).path
-            if path in {"/assets/dashboard.css","/assets/owner-history.js","/assets/request-controls.js"} or path in CHARACTER_ASSETS:
+            if path in {"/assets/dashboard.css","/assets/owner-history.js","/assets/request-controls.js","/assets/social-state.js"} or path in CHARACTER_ASSETS:
                 if self.headers.get("Host", "").split(":")[0] not in {"127.0.0.1", "localhost"}:
                     self.response(401, {"error": "仅限本机访问"})
                     return
                 try:
-                    if path == "/assets/request-controls.js":
+                    if path == "/assets/social-state.js":
+                        self.response(200,Path(__file__).with_name("social-state.js").read_bytes(),content_type="text/javascript; charset=utf-8")
+                    elif path == "/assets/request-controls.js":
                         self.response(200,Path(__file__).with_name("request-controls.js").read_bytes(),content_type="text/javascript; charset=utf-8")
                     elif path == "/assets/owner-history.js":
                         self.response(200,Path(__file__).with_name("owner-history.js").read_bytes(),content_type="text/javascript; charset=utf-8")
@@ -135,8 +137,32 @@ def handler_for(config_path: Path, token: str):
                         self.response(200, readiness(runtime))
                     finally:
                         runtime.close()
+                elif path == "/api/social":
+                    store = prepare_store(config)
+                    from murasamebot.application.social import SocialService, SocialSettings
+                    source_reader = history_source(config,store)
+                    try:
+                        SocialService(store,SocialSettings(**config.data["social"]),owner_person_id=config.data["owner_person_id"],
+                                      observations=history_service(config,store,source_reader)).context(channel="dynamic",now=time.time())
+                    finally:
+                        source_reader.close()
+                    records = []
+                    for row in store.social_rows(time.time(),include_inactive=True):
+                        source = {k:v for k,v in row["source"].items() if k not in {"activity_anchor","owner_activity_version"}}
+                        records.append({k:row[k] for k in ("state_id","status","version","created_at","expires_at","next_at","followups","public_allowed")}|{"source":source,"state":row["state"]})
+                    self.response(200,{"settings":config.data["social"],"records":records})
                 elif path == "/api/memory/scopes":
                     self.response(200,prepare_store(config).memory_scopes())
+                elif path == "/api/memory/journals":
+                    store=prepare_store(config)
+                    feeds={kind:store.memory_feed(kind) for kind in ("memory","diary","reflection")}
+                    source=history_source(config,store)
+                    try:
+                        if not history_service(config,store,source).diary_authorized():
+                            feeds["diary"]=[p for p in feeds["diary"] if p["purpose"]!="owner_observation_diary"]
+                    finally:
+                        source.close()
+                    self.response(200,feeds)
                 elif path.startswith("/api/data/"):
                     table = path.rsplit("/", 1)[-1]
                     self.response(200, prepare_store(config).inspect(table))
@@ -239,6 +265,11 @@ def handler_for(config_path: Path, token: str):
                     return
                 elif path == "/api/cancel":
                     store.cancel_task(str(data["id"]))
+                elif path == "/api/social/manage":
+                    if data.get("operation") not in {"resolve","forget"}:
+                        raise ValueError("未知的社交状态操作")
+                    store.social_forget(str(data["id"]),resolve=data["operation"]=="resolve")
+                    store.audit("social_managed",data["operation"]+":"+str(data["id"]),time.time())
                 elif path == "/api/forget":
                     store.forget(str(data["id"]))
                 elif path == "/api/memory/search":

@@ -13,6 +13,7 @@ from murasamebot.application.vision import VisionService
 from murasamebot.application.expressions import ExpressionService
 from murasamebot.application.memory import MemoryService
 from murasamebot.application.autonomy import AutonomyService
+from murasamebot.application.social import SocialService
 from murasamebot.domain.topics import blocked, combined_topic, document_topic, local_topic
 from murasamebot.application.review import inline_review, review_satisfied
 from murasamebot.domain.models import Action, ContentRef, Document, Event, ModelError, Persona, PlatformError, PolicyError, Receipt, stable_id
@@ -55,8 +56,14 @@ class SocialEngine:
         self.expressions = expressions
         self.memory_service = memory or MemoryService(store,model,timezone=settings.timezone)
         self.autonomy = AutonomyService(self)
+        self.social = SocialService(store, settings.social, owner_person_id=settings.owner_person_id, observations=owner_activity)
 
     def message_decision(self, operation, payload, platform, account_id, channel, now):
+        if operation in {"reply","private_chat","autonomous_post","autonomous_private"}:
+            social = self.settings.social
+            payload = {**payload,"social_rules":{"enabled":social.enabled,"ttl_hours":social.ttl_hours,
+                "followup_min_minutes":social.followup_min_minutes,"followup_max_minutes":social.followup_max_minutes,
+                "public_posts_enabled":social.public_posts_enabled,"private_feelings_public":social.private_feelings_public}}
         options = self.expressions.options(platform, account_id, channel, now) if self.expressions else ()
         payload = {**payload, "emoji_options": [{"key": e.key, "label": e.label, "token": e.token, "kind":e.kind} for e in options],
                    "max_emojis": self.expressions.settings.max_per_message if self.expressions else 0}
@@ -72,6 +79,8 @@ class SocialEngine:
         return text + "".join(e.token for e in emojis), emojis
 
     def enqueue_generated(self, action, result, now):
+        if self.social.guard(action,now):
+            return False
         if action.visibility == "public" and action.content and local_topic(action.text) == "sensitive":
             return False
         if action.owner_activity_version and (not self.owner_activity or self.owner_activity.guard(action,now)):
@@ -94,7 +103,7 @@ class SocialEngine:
             raise ValueError("工作已暂停，请先核对原因并恢复；重发不会自动解除暂停")
         action = replace(original,approved_manually=True,not_before=max(now,original.created_at),retry_at=0,
                          expires_at=now+self.settings.action_ttl_minutes*60,manual_attempts=original.manual_attempts+1)
-        reason = self.action_policy(action,now) or self.autonomy.guard(action,now)
+        reason = self.action_policy(action,now) or self.autonomy.guard(action,now) or self.social.guard(action,now)
         if action.owner_activity_version:
             reason = reason or (self.owner_activity.guard(action,now) if self.owner_activity else "主人观察服务不可用")
         if reason:
@@ -115,7 +124,8 @@ class SocialEngine:
     def document(self, ref: ContentRef, now: float, *, reply_to: str = "", root: str = "", context: ContentRef | None = None) -> Document:
         # Reply chains must be refreshed; cached video facts alone are insufficient.
         cached = self.store.cached_document(ref, now)
-        document = cached if cached and not reply_to and context is None else self.providers[ref.provider].read(ref, reply_to=reply_to, root=root, context=context)
+        refresh_media = cached and self.vision and self.vision.needs_refresh(cached, now)
+        document = cached if cached and not refresh_media and not reply_to and context is None else self.providers[ref.provider].read(ref, reply_to=reply_to, root=root, context=context)
         if self.vision:
             document = self.vision.enrich(document, now, previous=cached)
         self.store.cache_document(document, now)
@@ -286,13 +296,15 @@ class SocialEngine:
         context = self.memory_service.context(event,person,owner,now)
         if owner and self.owner_activity:
             context.update(self.owner_activity.private_context(person,now))
+        social = self.social.context(event=event,person=person,channel="private",now=now)
         result, options = self.message_decision("private_chat", {
             "persona": self.persona.prompt(owner, private=True), "message": event.text,
-            "owner_addressed": owner, **context,
+            "owner_addressed": owner, **context, "social_context": social,
             "intent_result": intent, "browsing_enabled": self.settings.browsing_enabled,
             "max_characters": self.settings.max_private_characters,
         }, event.platform, event.account_id, "private", now)
         if result.get("decision") == "skip":
+            self.social.capture(result,event=event,person=person,context=context,social_context=social,now=now)
             self.store.audit("private_skipped", f"{event.event_id}: 本条无需回复", now)
             return
         if result.get("decision") != "reply":
@@ -302,6 +314,8 @@ class SocialEngine:
             current = self.store.binding(person, event.platform)
             if not binding or not current or current["version"] != binding["version"]:
                 raise PolicyError("私聊生成期间主人身份绑定已变化")
+        captured = self.social.capture(result,event=event,person=person,context=context,social_context=social,now=now)
+        refs = self.social.references(social,captured)
         action = Action(stable_id(self.settings.agent_id, "private", event.event_id), self.settings.agent_id,
                         event.platform, event.account_id, None, text, now, now + self.settings.action_ttl_minutes * 60,
                         kind="private_reply", reply_to=event.reply_to, event_id=event.event_id,
@@ -310,7 +324,9 @@ class SocialEngine:
                         subject_person_id=person if owner else "", binding_version=binding["version"] if binding else 0,
                         decision_reason="互关私信：结合当前消息与同会话上下文自然接话", emojis=emojis,
                         memory_epoch=result["_memory_epoch"], owner_activity_version=context.get("owner_activity_version",""),
-                        owner_activity_sources=context.get("owner_activity_sources",()))
+                        owner_activity_sources=context.get("owner_activity_sources",()),
+                        social_refs=refs, social_followups=self.social.followups(result,social,captured),
+                        social_version=self.settings.social.version(),social_gap_seconds=self.settings.social.followup_gap_minutes*60)
         self.enqueue_generated(action,result,now)
 
     def _reply(self, event: Event, person: str | None, now: float) -> None:
@@ -338,13 +354,14 @@ class SocialEngine:
         private_owner = person == self.settings.owner_person_id and event.visibility == "private"
         scope = f"conversation:{event.platform}:{event.conversation_id}"
         context = self.memory_service.context(event,person,private_owner,now)
+        social = self.social.context(event=event,person=person,channel="public",now=now)
         result, options = self.message_decision("reply", {
             "persona": self.persona.prompt(owner_addressed=person == self.settings.owner_person_id),
             "message": event.text,
             "reply_target": {"id": event.reply_to, "root": event.thread_root,
                              "author_id": event.actor_id, "author_name": event.actor_name},
             "content": document.public_context() if document else None,
-            **context,
+            **context, "social_context":social,
             "max_characters": self.settings.max_comment_characters,
             "owner_content": owner_content,
             "topic_owner_exception": owner,
@@ -357,6 +374,7 @@ class SocialEngine:
             return
         if document:
             document = replace(document,topic_class=topic)
+        captured = self.social.capture(result,event=event,person=person,document=document,context=context,social_context=social,now=now)
         if result.get("decision") == "skip":
             if document:
                 self._queue_reactions(document, now, result.get("interested") is True, event=event,memory_epoch=result["_memory_epoch"])
@@ -374,6 +392,9 @@ class SocialEngine:
             decision_reason=str(result.get("reason", ""))[:200], dedup_key=event.event_id, emojis=emojis,
             memory_epoch=result["_memory_epoch"],
             topic_class=topic,
+            social_refs=self.social.references(social,captured,public=True),
+            social_followups=self.social.followups(result,social,captured,public=True),
+            social_version=self.settings.social.version(),social_gap_seconds=self.settings.social.followup_gap_minutes*60,
         )
         self.enqueue_generated(action,result,now)
         if document:
@@ -652,7 +673,7 @@ class SocialEngine:
             return False
         # Read the clock again after any preceding slow operation; test clocks remain deterministic.
         reason = self.store.validate_action(action, now)
-        reason = reason or self.action_policy(action, now) or self.autonomy.guard(action, now)
+        reason = reason or self.action_policy(action, now) or self.autonomy.guard(action, now) or self.social.guard(action,now)
         if reason or self.paused(action.platform):
             self.store.finish_action(action.action_id, Receipt("failed", detail=reason or "paused_before_send"), now)
             return True
@@ -683,7 +704,7 @@ class SocialEngine:
                 action = reviewed
             def before_write():
                 moment = time.time() if live_clock else now
-                local_ok = not self.store.validate_action(action, moment) and not self.paused(action.platform) and not self.action_policy(action, moment) and not self.autonomy.guard(action, moment)
+                local_ok = not self.store.validate_action(action, moment) and not self.paused(action.platform) and not self.action_policy(action, moment) and not self.autonomy.guard(action, moment) and not self.social.guard(action,moment)
                 if not local_ok:
                     return False
                 if action.kind in {"private_reply", "proactive_private"}:
@@ -727,6 +748,7 @@ class SocialEngine:
                 "owner_activity": (self.owner_activity.review_context(action,now)
                                    if action.visibility == "private" and action.owner_activity_version and self.owner_activity else None),
                 "content": document.public_context() if document else None,
+                    "social_context":self.social.review_context(action,now) if action.social_refs else None,
                 "evidence_level": action.evidence_level,
                 "emojis": [{"key": e.key, "token": e.token, "meaning": e.label, "kind":e.kind} for e in action.emojis],
                 "target_comment": next((c for c in document.comments if c.get("id") == action.reply_to), None) if document and action.reply_to else None,

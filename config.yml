@@ -7,12 +7,25 @@ owner_history:
   window_minutes: 120
   context_limit: 12
   use_for_private: true
+  diary_enabled: true  # private reflections at memory.review_time; never public facts
   playful_jealousy: false
   recommendations_enabled: false
   recommendation_topics: [galgame, 千恋万花]
   recommendation_daily_limit: 1
   recommendation_gap_minutes: 360
 owner_person_id: owner
+social:
+  enabled: true
+  public_posts_enabled: true  # still requires autonomy.dynamic_enabled
+  private_feelings_public: true  # owner consent: only generic feelings, no private facts
+  ttl_hours: 24
+  retention_days: 7
+  context_limit: 6
+  max_active_states: 20
+  max_followups: 2
+  followup_min_minutes: 15
+  followup_max_minutes: 720
+  followup_gap_minutes: 120
 requests:
   read_gap_seconds: 1.0
   read_max_wait_seconds: 5.0
@@ -65,6 +78,9 @@ memory:
   retry_minutes: 10
 vision:
   enabled: true
+  video_frames_enabled: true  # player-preview sprites only; no video download
+  video_frame_count: 6  # total across parts; also capped by max_images
+  video_frame_max_parts: 3  # sample the first 1-3 parts
   base_url: ${MURASAME_VISION_BASE_URL}  # blank: reuse the configured text service
   name: ${MURASAME_VISION_MODEL_NAME}  # blank: reuse model.name; must support image input
   api_key: ${MURASAME_VISION_API_KEY}  # blank with the same service: reuse model.api_key
@@ -74,7 +90,7 @@ vision:
   cache_minutes: 1440
   failure_retry_minutes: 10
   detail: auto
-  allowed_image_hosts: [i0.hdslb.com, i1.hdslb.com, i2.hdslb.com]
+  allowed_image_hosts: [i0.hdslb.com, i1.hdslb.com, i2.hdslb.com, bimp.hdslb.com]
 bilibili:
   credentials: .secrets/bilibili.json
   robot_uid: ""  # optional expected UID, checked against the logged-in account

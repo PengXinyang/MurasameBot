@@ -26,6 +26,8 @@ class SQLiteOwnerHistory:
         with self.connection() as db:
             db.execute("DELETE FROM owner_history WHERE agent_id=? AND person_id=? AND (viewed_at<? OR expires_at<=?)",
                        (self.agent_id,person_id,now-retention_days*86400,now))
+            self._invalidate_observation_diaries(db,now)
+            self._social_prune(db,now)
 
     def owner_history_state(self, person_id):
         return self.get_setting("owner_history:" + person_id, {"revision": "initial", "state": "not_synced"})
@@ -46,6 +48,8 @@ class SQLiteOwnerHistory:
         key = "owner_history:" + person_id
         with self.transaction() as db:
             db.execute("DELETE FROM owner_history WHERE agent_id=? AND person_id=?", (self.agent_id,person_id))
+            self._invalidate_observation_diaries(db,now)
+            self._social_prune(db,now)
             self._bump_memory_epoch(db)
             state = {"revision":uuid4().hex,"state":"not_synced","baseline_at":now,"forget_before":now if forget else 0}
             db.execute("INSERT INTO settings VALUES(?,?,?) ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value",
@@ -78,6 +82,8 @@ class SQLiteOwnerHistory:
                          state="baseline" if first else "synced", error="", warning=warning,
                          watermark=max([state.get("watermark",0), *[r["viewed_at"] for r in rows]]))
             db.execute("INSERT INTO settings VALUES(?,?,?) ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value", (self.agent_id,key,json.dumps(state)))
+            self._invalidate_observation_diaries(db,now)
+            self._social_prune(db,now)
             return True
 
     def owner_history_rows(self, person_id, now, *, limit=30, since=0, eligible_only=False):

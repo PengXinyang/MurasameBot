@@ -21,7 +21,7 @@ try{
   let id=0;const pending=new Map();
   socket.onmessage=event=>{const message=JSON.parse(event.data);if(message.id){const callback=pending.get(message.id);if(callback){pending.delete(message.id);message.error?callback.reject(Error(message.error.message)):callback.resolve(message.result)}}else if(message.method==='Runtime.exceptionThrown'){report.errors.push(message.params.exceptionDetails.text)}};
   function call(method,params={}){return new Promise((resolve,reject)=>{const sequence=++id;const timer=setTimeout(()=>{pending.delete(sequence);reject(Error('Browser command timed out: '+method))},15000);pending.set(sequence,{resolve:value=>{clearTimeout(timer);resolve(value)},reject:error=>{clearTimeout(timer);reject(error)}});socket.send(JSON.stringify({id:sequence,method,params}))})}
-  async function evaluate(expression){const result=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw Error(result.exceptionDetails.text);return result.result.value}
+  async function evaluate(expression){const result=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw Error(result.exceptionDetails.exception?.description||result.exceptionDetails.text);return result.result.value}
   await call('Page.enable');await call('Runtime.enable');
   await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1260,deviceScaleFactor:1,mobile:false});
@@ -36,6 +36,13 @@ try{
       const expected={private:['preview-private','preview-proactive'],comments:['preview-comment','preview-repost','preview-art','preview-autonomous'],reactions:['preview-like','preview-coin']}[screen.group];
       if(grouped.selected!==screen.group||JSON.stringify(grouped.ids.sort())!==JSON.stringify(expected.sort()))throw Error('Action category lost or mixed records: '+JSON.stringify(grouped));
       if(screen.group!=='reactions'&&!await evaluate("document.querySelector('#actionlist').textContent.includes('计划时间')"))throw Error('Scheduled initiative time was not shown');
+    }
+    if(screen.tab==='social')await until(()=>evaluate("!!document.querySelector('#social-records [data-social-op=resolve]')&&document.querySelectorAll('#social-fields input,#social-fields select').length===11"));
+    if(screen.tab==='settings'&&screen.group==='messages'){
+      await evaluate("document.querySelector('#visionenabled').closest('.panel').scrollIntoView({block:'center'});new Promise(resolve=>requestAnimationFrame(resolve))");
+      const frameControls=await evaluate("['videoframesenabled','videoframecount','videoframeparts'].map(id=>{const e=document.getElementById(id),r=e.getBoundingClientRect();return {id,value:e.value,width:r.width,left:r.left,right:r.right}})");
+      if(frameControls.some(control=>control.width<=0||control.left<0||control.right>screen.width))throw Error('Video frame controls are hidden or overflow');
+      report.video_frame_controls=frameControls;
     }
     const metrics=await evaluate("({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,controls:document.querySelectorAll('#settings input,#settings select,#settings textarea').length,missingArt:[...document.images].filter(image=>image.hasAttribute('src')&&!image.naturalWidth).length})");
     if(metrics.scrollWidth>metrics.width)throw Error('Horizontal page overflow: '+screen.tab+' '+screen.width+' '+JSON.stringify(metrics));
@@ -59,7 +66,7 @@ try{
   if(!await evaluate("document.querySelector('#actionlist').textContent.includes('还没有点赞或投币记录')&&document.querySelector('#action-count-private').textContent==='0'&&document.querySelector('#action-count-comments').textContent==='0'&&document.querySelector('#action-count-reactions').textContent==='0'"))throw Error('Action category empty state failed');
   await evaluate("refresh()");
   await call('Page.reload');
-  await until(()=>evaluate("actionRows.length===8&&!!document.querySelector('#limit-daily_comments')"));
+  await until(()=>evaluate("typeof actionRows!=='undefined'&&actionRows.length===8&&!!document.querySelector('#limit-daily_comments')"));
   if(!await evaluate("activeActionGroup==='reactions'&&document.querySelector('#action-tab-reactions').getAttribute('aria-selected')==='true'"))throw Error('Action selection did not survive page reload');
   report.action_groups.empty_state=true;
   report.action_groups.reload_preserves_selection=true;
@@ -68,6 +75,10 @@ try{
   if(!await evaluate("config.processing.model_concurrency===7&&!document.querySelector('#save-status').classList.contains('dirty')"))throw Error('Settings save did not round-trip');
   await evaluate("document.querySelector('#concurrency').value='4';saveSettings()");
   report.settings_save_roundtrip=true;
+  await evaluate("document.querySelector('#videoframesenabled').value='false';document.querySelector('#videoframecount').value='4';document.querySelector('#videoframeparts').value='2';saveSettings()");
+  if(!await evaluate("config.vision.video_frames_enabled===false&&config.vision.video_frame_count===4&&config.vision.video_frame_max_parts===2"))throw Error('Video frame settings did not round-trip');
+  await evaluate("document.querySelector('#videoframesenabled').value='true';document.querySelector('#videoframecount').value='6';document.querySelector('#videoframeparts').value='3';saveSettings()");
+  report.video_frame_settings_save_roundtrip=true;
   await evaluate("document.querySelector('#autonomy-private_enabled').value='true';document.querySelector('#autonomy-max_delay_minutes').value='45';saveSettings()");
   if(!await evaluate("config.autonomy.private_enabled===true&&config.autonomy.max_delay_minutes===45"))throw Error('Autonomy settings did not round-trip');
   await evaluate("document.querySelector('#autonomy-private_enabled').value='false';document.querySelector('#autonomy-max_delay_minutes').value='120';saveSettings()");
@@ -84,17 +95,30 @@ try{
   report.memory_settings_save_roundtrip=true;
   report.memory_source_search=true;
   await until(()=>evaluate("document.querySelector('[data-history=poll_seconds]')?.value==='300'"));
-  if(!await evaluate("document.querySelector('#owner-history-state').textContent.includes('等待扫码')&&document.querySelectorAll('[data-history]').length===12"))throw Error('Owner history controls did not load');
+  if(!await evaluate("document.querySelector('#owner-history-state').textContent.includes('等待扫码')&&document.querySelectorAll('[data-history]').length===13&&document.querySelector('#owner-history-panel').closest('section').id==='owner-history'&&!document.querySelector('#memories #owner-history-panel')"))throw Error('Owner history controls did not load on their own page');
+  if(!await evaluate("[...document.querySelectorAll('#memory-products [data-product-kind]')].every(n=>!['diary','reflection'].includes(n.dataset.productKind))&&document.querySelector('#memory-diaries [data-product-kind=diary]')&&document.querySelector('#memory-reflections [data-product-kind=reflection]')"))throw Error('Diary and reflection were mixed into other memory feeds');
+  await evaluate("chooseTab('diary');document.querySelector('#memory-diaries [data-memory-op=sources]').click()");
+  await until(()=>evaluate("document.querySelector('#memory-source-dialog').open"));
+  await evaluate("document.querySelector('#memory-source-dialog').close();chooseTab('owner-history')");
+  report.journal_pages={diary:true,reflections:true,owner_history_independent:true,sources_dialog:true};
   await evaluate("(async()=>{document.querySelector('[data-history=poll_seconds]').value='180';document.querySelector('[data-history=recommendation_topics]').value='galgame\\n千恋万花';await document.querySelector('#owner-history-save').onclick()})()");
   if(!await evaluate("(async()=>{const c=await api('config');return c.owner_history.poll_seconds===180&&c.owner_history.recommendation_topics.length===2&&!c.owner_history.enabled&&!c.owner_history.recommendations_enabled})()"))throw Error('Owner history settings round-trip failed');
   await evaluate("(async()=>{document.querySelector('[data-history=poll_seconds]').value='300';await document.querySelector('#owner-history-save').onclick()})()");
-  report.owner_history={controls:12,settings_save_roundtrip:true,collection_default_off:true,recommendations_default_off:true};
+  report.owner_history={controls:13,settings_save_roundtrip:true,collection_default_off:true,recommendations_default_off:true,diary_setting:true};
   await until(()=>evaluate("document.querySelector('#private-poll-seconds')?.value==='30'"));
   if(!await evaluate("document.querySelector('[data-request=quiet_before_seconds]').value==='60'&&document.querySelectorAll('[data-request]').length===9"))throw Error('Request controls did not load');
   await evaluate("(async()=>{document.querySelector('#private-poll-seconds').value='45';await document.querySelector('#request-save').onclick()})()");
   if(!await evaluate("(async()=>{const c=await api('config');return c.bilibili.private_poll_seconds===45&&c.requests.quiet_before_seconds===60})()"))throw Error('Request controls did not save');
   await evaluate("(async()=>{document.querySelector('#private-poll-seconds').value='30';await document.querySelector('#request-save').onclick()})()");
   report.request_controls={fields:9,private_poll_save_roundtrip:true,quiet_before_seconds:60};
+  await evaluate("chooseTab('social');document.querySelector('#social-max_followups').value='1';saveSocialSettings()");
+  if(!await evaluate("(async()=>{const c=await api('config');return c.social.max_followups===1&&c.social.private_feelings_public===true})()"))throw Error('Social state settings did not round-trip');
+  await evaluate("document.querySelector('#social-max_followups').value='2';saveSocialSettings()");
+  await evaluate("document.querySelector('#social-records [data-social-op=resolve]').click()");
+  await until(()=>evaluate("document.querySelector('#social-records').textContent.includes('已结束')&&!document.querySelector('#social-records [data-social-op=resolve]')"));
+  await evaluate("document.querySelector('#social-records [data-social-op=forget]').click()");
+  await until(()=>evaluate("document.querySelector('#social-records').textContent.includes('已遗忘')&&!document.querySelector('#social-records [data-social-op=forget]')"));
+  report.social_states={settings_save_roundtrip:true,source_visible:true,resolve:true,forget:true};
   if(report.errors.length)throw Error('Browser reported JavaScript exceptions');
   await writeFile(plan.report,JSON.stringify(report,null,2));
 }finally{

@@ -14,6 +14,7 @@ import yaml
 from murasamebot.application.settings import Behaviour
 from murasamebot.application.memory import MemorySettings
 from murasamebot.application.autonomy import AutonomySettings
+from murasamebot.application.social import SocialSettings
 from murasamebot.application.owner_history import OwnerHistorySettings
 from murasamebot.application.request_policy import RequestSettings
 
@@ -54,7 +55,7 @@ class Config:
         if not isinstance(raw, dict):
             raise ValueError("配置必须为 YAML 对象")
         from murasamebot.adapters.network import DIRECT_DOMAINS, GFWLIST_URL
-        raw = merge({"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
+        raw = merge({"social":asdict(SocialSettings()),"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
                      "bilibili":{"private_poll_seconds":30},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "limits":{"event_retry_seconds":60},
@@ -83,6 +84,21 @@ class Config:
 
     @staticmethod
     def validate(data: dict):
+        social = data.get("social", {})
+        if not isinstance(social,dict) or set(social)-set(SocialSettings.__dataclass_fields__):
+            raise ValueError("未知的社交状态设置")
+        defaults = asdict(SocialSettings())
+        for key, default in defaults.items():
+            value = social.get(key, default)
+            if type(default) is bool:
+                if type(value) is not bool:
+                    raise ValueError("社交状态开关需要为布尔值")
+            elif type(value) is not int or not 1 <= value <= {"ttl_hours":72,"retention_days":30,"context_limit":10,"max_active_states":100,"max_followups":3,"followup_min_minutes":720,"followup_max_minutes":4320,"followup_gap_minutes":1440}[key]:
+                raise ValueError("社交状态参数超出允许范围："+key)
+        values = {**defaults,**social}
+        if (values["context_limit"]>values["max_active_states"] or values["ttl_hours"]>values["retention_days"]*24 or
+                values["followup_min_minutes"]>values["followup_max_minutes"] or values["followup_max_minutes"]>=values["ttl_hours"]*60):
+            raise ValueError("社交状态的上下文、保留期限或跟进时间范围不一致")
         requests = data.get("requests",asdict(RequestSettings()))
         if not isinstance(requests,dict) or set(requests)-set(RequestSettings.__dataclass_fields__):
             raise ValueError("未知的请求控制设置")
@@ -103,7 +119,7 @@ class Config:
         history = data.get("owner_history", {})
         if not isinstance(history,dict) or set(history)-set(OwnerHistorySettings.__dataclass_fields__):
             raise ValueError("未知的主人观察设置")
-        for key in ("enabled","use_for_private","playful_jealousy","recommendations_enabled"):
+        for key in ("enabled","use_for_private","diary_enabled","playful_jealousy","recommendations_enabled"):
             if type(history.get(key)) is not bool:
                 raise ValueError("主人观察开关必须为布尔值")
         for key,low,high in (("poll_seconds",60,86400),("pages",1,3),("retention_days",1,30),
@@ -283,6 +299,12 @@ class Config:
         vision = data.get("vision", {})
         if type(vision.get("enabled", True)) is not bool:
             raise ValueError("视觉开关必须为布尔值")
+        if type(vision.get("video_frames_enabled", True)) is not bool:
+            raise ValueError("视频预览帧开关必须为布尔值")
+        for key, default, maximum in (("video_frame_count", 6, 9), ("video_frame_max_parts", 3, 3)):
+            value = vision.get(key, default)
+            if type(value) is not int or not 1 <= value <= maximum:
+                raise ValueError(f"视觉 {key} 配置超出允许范围")
         for key, maximum in (("max_images", 9), ("max_image_bytes", 32 * 1024 * 1024),
                              ("max_total_bytes", 32 * 1024 * 1024), ("cache_minutes", 10080), ("failure_retry_minutes", 1440)):
             value = vision.get(key)
@@ -345,7 +367,7 @@ class Config:
     def behaviour(self, account_id: str = "") -> Behaviour:
         browse, limits = self.data["browsing"], self.data["limits"]
         values = {key: limits[key] for key in limits if key in {f.name for f in fields(Behaviour)}}
-        return Behaviour(autonomy=AutonomySettings.from_config(self.data["autonomy"]), agent_id=self.data["agent_id"], owner_person_id=self.data["owner_person_id"],
+        return Behaviour(social=SocialSettings(**self.data["social"]),autonomy=AutonomySettings.from_config(self.data["autonomy"]), agent_id=self.data["agent_id"], owner_person_id=self.data["owner_person_id"],
                          private_messages_enabled=self.data["bilibili"].get("private_messages_enabled",True),
                          account_id=account_id, timezone=self.data["timezone"], draft=self.data["mode"] == "draft",
                          model_review=self.data["mode"] == "reviewed",
@@ -392,14 +414,14 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if set(patch.get("network", {})) - {"proxy_enabled", "proxy_url", "proxy_mode", "gfwlist_refresh_hours", "direct_domains"}:
             raise ValueError("规则来源和缓存路径请在本地配置文件中管理")
         if set(patch.get("artwork", {})) - {"enabled", "delivery", "times", "weekdays", "grace_minutes", "candidate_limit", "max_caption_characters", "keywords", "sources"}:
             raise ValueError("来源密钥和转载授权请在本地配置文件中管理")
-        if set(patch.get("vision", {})) - {"enabled", "max_images", "detail"}:
+        if set(patch.get("vision", {})) - {"enabled", "max_images", "detail", "video_frames_enabled", "video_frame_count", "video_frame_max_parts"}:
             raise ValueError("视觉服务密钥与网络来源请在本地文件配置")
         if set(patch.get("model", {})) - {"daily_call_limit"}:
             raise ValueError("模型密钥、地址与模型名称请在本地文件配置")

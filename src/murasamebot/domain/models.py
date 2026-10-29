@@ -60,6 +60,9 @@ class Event:
 class ImageRef:
     url: str
     index: int
+    crop: tuple[int, ...] = ()  # left, top, width, height in the source image
+    timestamp_seconds: float | None = None
+    part: int = 0  # one-based video part; zero for ordinary images
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,21 @@ class ImageInput:
     sha256: str
     size_bytes: int
     animated: bool = False
+    width: int = 0
+    height: int = 0
+
+
+@dataclass(frozen=True)
+class FrameContext:
+    status: str
+    requested_frames: int = 6
+    max_parts: int = 3
+    total_parts: int = 1
+    sampled_parts: tuple[int, ...] = ()
+    limitations: tuple[str, ...] = ()
+    created_at: float = 0
+    retry_after: float = 0
+    source: str = "player_preview"
 
 
 @dataclass(frozen=True)
@@ -109,6 +127,7 @@ class Document:
     parent: ContentRef | None = None
     comment_context: CommentContext | None = None
     topic_class: str = "unknown"
+    frame_context: FrameContext | None = None
 
     def public_context(self) -> dict[str, Any]:
         return asdict(self)
@@ -118,7 +137,12 @@ class Document:
         values = dict(data)
         values["ref"] = ContentRef(**values["ref"])
         values["comments"] = tuple(values.get("comments", ()))
-        values["images"] = tuple(ImageRef(**image) for image in values.get("images", ()))
+        values["images"] = tuple(ImageRef(**{**image, "crop": tuple(image.get("crop", ()))}) for image in values.get("images", ()))
+        if isinstance(values.get("frame_context"), dict):
+            frames = dict(values["frame_context"])
+            for name in ("sampled_parts", "limitations"):
+                frames[name] = tuple(frames.get(name, ()))
+            values["frame_context"] = FrameContext(**frames)
         if isinstance(values.get("comment_context"), dict):
             coverage = dict(values["comment_context"])
             for name in ("missing_ids", "issues"):
@@ -207,6 +231,10 @@ class Action:
     manual_attempts: int = 0
     topic_class: str = "unknown"
     retry_at: float = 0
+    social_refs: tuple[dict[str, Any], ...] = ()
+    social_followups: tuple[str, ...] = ()
+    social_version: str = ""
+    social_gap_seconds: int = 7200
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -218,6 +246,8 @@ class Action:
             data["content"] = ContentRef(**data["content"])
         data["mentions"] = tuple(data.get("mentions", ()))
         data["owner_activity_sources"] = tuple(data.get("owner_activity_sources", ()))
+        data["social_refs"] = tuple(data.get("social_refs", ()))
+        data["social_followups"] = tuple(data.get("social_followups", ()))
         data["emojis"] = tuple(Emoji(**item) for item in data.get("emojis", ()))
         if isinstance(data.get("context"), dict):
             data["context"] = ContentRef(**data["context"])

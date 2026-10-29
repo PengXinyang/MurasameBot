@@ -216,7 +216,7 @@ class SQLiteMemory:
     def memory_reserve(self, day, limit):
         with self.transaction() as db:
             row = db.execute("SELECT calls FROM memory_daily WHERE agent_id=? AND day=?", (self.agent_id,day)).fetchone()
-            if row and row[0]>=limit:
+            if (row[0] if row else 0)>=limit:
                 return False
             db.execute("INSERT INTO memory_daily VALUES(?,?,1) ON CONFLICT(agent_id,day) DO UPDATE SET calls=calls+1", (self.agent_id,day))
         return True
@@ -264,6 +264,7 @@ class SQLiteMemory:
         return True
 
     def _invalidate_memory_sources(self, db, event_ids):
+        self.social_invalidate_events(db,event_ids)
         for eid in set(event_ids):
             db.execute("INSERT OR IGNORE INTO memory_suppressed VALUES(?,?)", (self.agent_id,eid))
             ids = [r[0] for r in db.execute("SELECT record_id FROM conversation_records WHERE agent_id=? AND event_id=?", (self.agent_id,eid))]
@@ -281,6 +282,12 @@ class SQLiteMemory:
             row = db.execute("SELECT * FROM memory_products WHERE agent_id=? AND product_id=? AND active=1", (self.agent_id,product_id)).fetchone()
             if not row:
                 raise ValueError("记忆条目不存在或已失效")
+            if row["purpose"] == "owner_observation_diary":
+                if not forget:
+                    raise ValueError("观察日记仅支持查看来源和遗忘，不改写观看记录")
+                db.execute("UPDATE memory_products SET active=0,text='[已删除]' WHERE agent_id=? AND product_id=?",(self.agent_id,product_id))
+                self._bump_memory_epoch(db)
+                return product_id
             if forget:
                 eids = [r[0] for r in db.execute("SELECT DISTINCT r.event_id FROM conversation_records r JOIN memory_sources s ON s.agent_id=r.agent_id AND s.record_id=r.record_id WHERE s.agent_id=? AND s.product_id=?", (self.agent_id,product_id))]
             elif text is not None:
@@ -291,6 +298,8 @@ class SQLiteMemory:
                 db.execute("INSERT INTO memory_products VALUES(?,?,?,?,?,?,?,?,1,?,?)", (self.agent_id,pid,row["person_id"],row["scope"],row["purpose"],"correction",text.strip(),now,row["pinned"],product_id))
                 db.execute("INSERT INTO memory_sources SELECT agent_id,?,record_id FROM memory_sources WHERE agent_id=? AND product_id=?", (pid,self.agent_id,product_id))
                 db.execute("UPDATE memory_products SET active=0 WHERE agent_id=? AND product_id!=? AND product_id IN (SELECT s.product_id FROM memory_sources s WHERE s.agent_id=? AND s.record_id IN (SELECT record_id FROM memory_sources WHERE agent_id=? AND product_id=?))", (self.agent_id,pid,self.agent_id,self.agent_id,pid))
+                related = [r[0] for r in db.execute("SELECT DISTINCT r.event_id FROM conversation_records r JOIN memory_sources s ON s.agent_id=r.agent_id AND s.record_id=r.record_id WHERE s.agent_id=? AND s.product_id=?", (self.agent_id,product_id))]
+                self.social_invalidate_events(db,related)
                 self._bump_memory_epoch(db)
                 return pid
             elif pinned is not None:
@@ -334,6 +343,15 @@ class SQLiteMemory:
 
     def memory_product_source_records(self, product_id):
         with self.connection() as db:
+            observations = db.execute("SELECT h.record_id,h.payload FROM observation_diary_sources s JOIN owner_history h ON h.agent_id=s.agent_id AND h.person_id=s.person_id AND h.record_id=s.record_id JOIN memory_products p ON p.agent_id=s.agent_id AND p.product_id=s.product_id AND p.active=1 WHERE s.agent_id=? AND s.product_id=? ORDER BY h.viewed_at",(self.agent_id,product_id)).fetchall()
+            if observations:
+                result=[]
+                for row in observations:
+                    item=json.loads(row["payload"])
+                    result.append({"record_id":row["record_id"],"role":"observation","active":1,"source_type":"owner_history",
+                                   "text":item["title"]+" · "+item.get("category","")+"（观看线索，不代表看完或正在观看）",
+                                   "occurred_at":item["viewed_at"]})
+                return result
             rows = db.execute("SELECT r.* FROM conversation_records r JOIN memory_sources s ON s.agent_id=r.agent_id AND s.record_id=r.record_id WHERE s.agent_id=? AND s.product_id=? ORDER BY r.occurred_at,r.record_id", (self.agent_id,product_id)).fetchall()
         return [dict(r) for r in rows]
 

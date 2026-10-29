@@ -35,3 +35,12 @@
 @media(max-width:620px){.hero{min-height:425px}.hero .hero-copy{width:100%;padding:24px 21px}.hero .hero-art{width:180px;height:180px;right:15px;top:auto;bottom:6px}.hero .character-chip{left:18px;right:auto;bottom:22px;max-width:165px}.hero .character-orbit{top:auto;bottom:-20px;right:8px}.page-companion{gap:10px;min-height:105px;padding-right:12px;margin-bottom:16px}.companion-picture{width:92px}.companion-picture img{width:92px;height:120px}.companion-copy>span{font-size:6px;letter-spacing:.6px}.companion-copy h3{font-size:14px;margin:6px 0;line-height:1.7}.companion-copy p{font-size:10px;line-height:1.8}.companion-flower{display:none}}
 
 #owner-history-panel{margin-bottom:24px}#owner-history-panel .controls{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}#owner-history-panel .controls button{white-space:normal}#owner-history-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}#owner-history-controls label{display:block;font-size:12px;min-width:0}#owner-history-controls input,#owner-history-controls select,#owner-history-controls textarea{display:block;width:100%;box-sizing:border-box;margin-top:7px}#owner-history-panel .row{overflow-wrap:anywhere}#owner-history-state{overflow-wrap:anywhere}@media(max-width:620px){#owner-history-controls{grid-template-columns:1fr}#owner-history-panel .controls button{flex:1 1 44%}}
+
+/* Source-backed role reactions stay visually distinct from factual memories. */
+#social .panel+.panel{margin-top:22px}
+#social-records .item{padding:20px 0;border-top:1px solid var(--line);line-height:1.75;overflow-wrap:anywhere}
+#social-records .item:first-child{margin-top:16px}
+#social-records .item p{margin:12px 0}
+#social-records details{margin:12px 0;color:var(--muted)}
+#social-records blockquote{margin:10px 0;padding:10px 14px;border-left:3px solid #bfd3b2;background:#f5f8f0;border-radius:0 8px 8px 0;white-space:pre-wrap}
+#social-records .item button{margin:5px 6px 0 0}
