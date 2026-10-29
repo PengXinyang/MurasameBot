@@ -1,5 +1,5 @@
 """Private observations, independent of social-message ingestion and memories."""
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -58,26 +58,42 @@ class OwnerHistoryService:
 
     def _observations(self, person_id, now):
         s = self.settings
-        if person_id != self.person_id or not s.enabled:
-            return {}
-        binding = self.store.binding(person_id, self.platform)
-        if not binding:
+        grant = self._grant_version()
+        if person_id != self.person_id or not grant:
             return {}
         state = self.store.owner_history_state(person_id)
+        rows = self.store.owner_history_rows(person_id, now, limit=s.context_limit,
+                                             since=now-s.window_minutes*60, eligible_only=True)
+        if not rows or self._grant_version() != grant:
+            return {}
+        return {"owner_activity": self._activity(rows, state),
+                "owner_activity_version": grant,
+                "owner_activity_sources": tuple(stable_id(r["content_id"],r["viewed_at"]) for r in rows),
+                "owner_activity_fingerprint": stable_id(state.get("auth"),state["revision"],rows)}
+
+    def _activity(self, rows, state):
+        return {"source": "主人授权的本人观看历史", "records": rows,
+                "partial": bool(state.get("warning")), "playful_jealousy": self.settings.playful_jealousy,
+                "limitations": "这些是过去发生的观看线索，新增记录不否定旧观察；勿推断现在仍在观看。播放进度不是实际观看时长；不是永久偏好或委托。"}
+
+    def _grant_version(self):
+        s = self.settings
+        binding = self.store.binding(self.person_id,self.platform)
+        if not s.enabled or not binding:
+            return ""
+        state = self.store.owner_history_state(self.person_id)
         try:
             auth = self.source.authorization(binding)
         except (PlatformError, ValueError, OSError):
-            return {}
-        if state.get("auth") != auth or state.get("state") == "error":
-            return {}
-        rows = self.store.owner_history_rows(person_id, now, limit=s.context_limit,
-                                             since=now-s.window_minutes*60, eligible_only=True)
-        if not rows:
-            return {}
-        return {"owner_activity": {"source": "主人授权的本人观看历史", "records": rows,
-                "partial": bool(state.get("warning")), "playful_jealousy": s.playful_jealousy,
-                "limitations": "播放进度不是实际观看时长；仅为短期观察，不是永久偏好或委托。"},
-                "owner_activity_version": stable_id(auth, state["revision"], asdict(s), rows)}
+            return ""
+        if state.get("auth") != auth or state.get("error") in {
+                "owner_login_required","owner_login_invalid","owner_identity_mismatch",
+                "owner_binding_missing","owner_auth_or_api_error"}:
+            return ""
+        # Operational polling/window limits do not revoke an established fact.
+        policy = (s.use_for_private,s.playful_jealousy,s.recommendations_enabled,s.recommendation_topics)
+        return "v2:"+stable_id(auth,state["revision"],self.person_id,self.platform,
+                               binding["external_id"],binding["version"],policy)
 
     def private_context(self, person_id, now):
         return self._observations(person_id,now) if self.settings.use_for_private else {}
@@ -89,11 +105,20 @@ class OwnerHistoryService:
                    and action.subject_person_id == self.person_id)
         public = (action.kind == "recommendation" and action.visibility == "public" and
                   action.mentions == (self.person_id,) and self.settings.recommendations_enabled)
-        context = self._observations(self.person_id,now)
-        if (not (private or public) or
-                context.get("owner_activity_version") != action.owner_activity_version):
-            return "主人观察授权或数据已失效"
+        if not (private or public) or action.platform != self.platform or self._grant_version() != action.owner_activity_version:
+            return "主人观察授权或使用权限已失效；请重新生成"
+        if not action.owner_activity_sources:
+            return "旧消息缺少可核验的观察来源；请重新生成"
+        rows = self.store.owner_history_sources(self.person_id,action.owner_activity_sources,now,self.settings.retention_days)
+        if len(rows) != len(set(action.owner_activity_sources)):
+            return "消息引用的主人观察已被删除或超过保留期限；请重新生成"
         return ""
+
+    def review_context(self, action, now):
+        if self.guard(action,now):
+            return None
+        rows = self.store.owner_history_sources(self.person_id,action.owner_activity_sources,now,self.settings.retention_days)
+        return self._activity(rows,self.store.owner_history_state(self.person_id))
 
     def recommend(self, engine, now):
         """Only configured public topics cross into a public recommendation prompt."""
@@ -115,10 +140,10 @@ class OwnerHistoryService:
         day = datetime.fromtimestamp(now,ZoneInfo(e.settings.timezone)).date().isoformat()
         used = state.get("attempts",0) if state.get("day")==day else 0
         if (used>=s.recommendation_daily_limit or now-state.get("at",0)<s.recommendation_gap_minutes*60
-                or state.get("version")==context["owner_activity_version"]):
+                or state.get("version")==context["owner_activity_fingerprint"]):
             return False
         # Reserve before search/model calls: skips and failures cannot cause a burst.
-        state = {"day":day,"attempts":used+1,"at":now,"version":context["owner_activity_version"],"state":"searching"}
+        state = {"day":day,"attempts":used+1,"at":now,"version":context["owner_activity_fingerprint"],"state":"searching"}
         db.set_setting(key,state)
         try:
             refs = e.providers[e.settings.platform].search(topic,e.settings.categories,e.settings.candidate_limit)
@@ -130,6 +155,7 @@ class OwnerHistoryService:
                 if not e.can_evaluate(document):
                     continue
                 observation = {"topic":topic,"version":context["owner_activity_version"],
+                               "sources":context["owner_activity_sources"],
                                "memory_epoch":db.get_setting("memory_epoch",0)}
                 if e._evaluate(document,now,owner_observation=observation):
                     state["state"]="planned"

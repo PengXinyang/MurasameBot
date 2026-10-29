@@ -214,6 +214,17 @@ def handler_for(config_path: Path, token: str):
                     store.audit("platform_resumed","管理台手动恢复工作；接口冷却仍按各自期限执行",time.time())
                 elif path == "/api/approve":
                     store.approve_action(str(data["id"]), time.time())
+                elif path == "/api/actions/send":
+                    if set(data) != {"id"} or not isinstance(data["id"],str):
+                        raise ValueError("只接受消息ID，不能通过发送接口修改正文或收件人")
+                    runtime = build(config)
+                    try:
+                        action = runtime.engine.queue_manual_send(data["id"])
+                        self.response(200,{"ok":True,"state":"queued","id":action.action_id,
+                                           "detail":"已加入发送队列；请保持工作循环运行，额度与发送间隔仍生效"})
+                    finally:
+                        runtime.close()
+                    return
                 elif path == "/api/reject":
                     store.reject_action(str(data["id"]))
                 elif path == "/api/publication/check":

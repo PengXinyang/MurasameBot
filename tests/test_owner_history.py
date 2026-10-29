@@ -251,14 +251,65 @@ def test_qr_success_enables_sync_expiry_and_binding_changes_are_rejected(tmp_pat
     with pytest.raises(ValueError):manager.poll(config,store)
 
 
-def test_snapshot_changes_and_retention_expiry_invalidate_private_opening(factory,now):
+def test_new_history_keeps_private_opening_valid_until_referenced_observation_expires(factory,now):
     e,store,model,rows,service=setup(factory)
     service.sync(now);rows.append(record(now+61));service.sync(now+62)
     enable(e,model,channel="private");e.autonomy.run(now+63)
     action=queued(store)
     rows.append(record(now+121,"43"));service.sync(now+122)
-    assert service.guard(action,now+122)
+    assert not service.guard(action,now+122)
+    assert service.guard(action,now+8*86400)
     assert not store.owner_history_rows("owner",now+8*86400)
+
+
+def test_progress_refresh_window_rolloff_and_transient_error_preserve_observed_fact(factory,now):
+    e,store,model,rows,service=setup(factory)
+    service.sync(now);rows.append(record(now+61));service.sync(now+62)
+    enable(e,model,channel="private");e.autonomy.run(now+63)
+    action=queued(store)
+    rows[0]["progress"]=150
+    rows.append(record(now+121,"43",title="后来新增的观看线索"));service.sync(now+122)
+    assert not service.guard(action,now+123)
+    review=service.review_context(action,now+123)
+    assert [r["content_id"] for r in review["records"]]==["42"]
+    assert review["records"][0]["progress"]==150
+    # Recent-context rollover and collection settings do not revoke the fact.
+    service.settings=replace(service.settings,context_limit=1,poll_seconds=600,window_minutes=1)
+    assert not service.private_context("owner",now+8000)
+    assert not service.guard(action,now+8000)
+    state=store.owner_history_state("owner")
+    store.owner_history_status("owner",state["revision"],{"state":"error","error":"owner_network_error"})
+    assert not service.guard(action,now+8000)
+    assert service.guard(action,now+8*86400)
+
+
+@pytest.mark.parametrize("change",["auth","private_off","disabled","binding","source_deleted","auth_error","legacy"])
+def test_observation_grants_and_referenced_sources_still_gate_sending(factory,now,change):
+    e,store,model,rows,service=setup(factory)
+    service.sync(now);rows.append(record(now+61));service.sync(now+62)
+    enable(e,model,channel="private");e.autonomy.run(now+63)
+    action=queued(store)
+    if change=="auth":service.source.authorization=lambda b:"new-auth"
+    elif change=="private_off":service.settings=replace(service.settings,use_for_private=False)
+    elif change=="disabled":service.settings=replace(service.settings,enabled=False)
+    elif change=="binding":store.revoke_binding("owner","bilibili")
+    elif change=="source_deleted":
+        with store.connection() as db:db.execute("DELETE FROM owner_history WHERE record_id=?",action.owner_activity_sources)
+    elif change=="auth_error":
+        state=store.owner_history_state("owner")
+        store.owner_history_status("owner",state["revision"],{"state":"error","error":"owner_identity_mismatch"})
+    elif change=="legacy":action=replace(action,owner_activity_sources=(),owner_activity_version="old-snapshot")
+    assert service.guard(action,now+64)
+
+
+def test_planned_private_message_dispatches_after_new_history(factory,now):
+    e,store,model,rows,service=setup(factory)
+    service.sync(now);rows.append(record(now+61));service.sync(now+62)
+    enable(e,model,channel="private");e.autonomy.run(now+63)
+    action=queued(store)
+    rows.append(record(now+121,"43"));service.sync(now+122)
+    assert e.dispatch_one(action.not_before)
+    assert store.inspect("actions")[0]["state"]=="accepted"
 
 
 def test_regular_private_reply_uses_history_only_for_verified_owner(factory,now):

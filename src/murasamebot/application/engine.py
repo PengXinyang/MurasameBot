@@ -85,6 +85,22 @@ class SocialEngine:
     def paused(self, platform: str = "") -> bool:
         return bool(self.store.get_setting("paused", False) or (platform and self.store.get_setting(f"platform_paused:{platform}", False)))
 
+    def queue_manual_send(self, action_id: str, now: float | None = None):
+        now = time.time() if now is None else now
+        original = self.store.manual_send_target(action_id)
+        if original.account_id != self.settings.account_id or original.platform != self.settings.platform:
+            raise ValueError("登录账号或平台已变化，不能发送旧消息")
+        if self.paused(original.platform):
+            raise ValueError("工作已暂停，请先核对原因并恢复；重发不会自动解除暂停")
+        action = replace(original,approved_manually=True,not_before=max(now,original.created_at),retry_at=0,
+                         expires_at=now+self.settings.action_ttl_minutes*60,manual_attempts=original.manual_attempts+1)
+        reason = self.action_policy(action,now) or self.autonomy.guard(action,now)
+        if action.owner_activity_version:
+            reason = reason or (self.owner_activity.guard(action,now) if self.owner_activity else "主人观察服务不可用")
+        if reason:
+            raise ValueError("消息不能发送："+reason)
+        return self.store.requeue_action(original,action,now,self.settings.min_send_gap_seconds)
+
     def pause_platform(self, exc: PlatformError, fallback: str):
         if exc.pause:
             self.store.set_setting(f"platform_paused:{exc.platform or fallback}", True)
@@ -293,7 +309,8 @@ class SocialEngine:
                         source_sequence=event.sequence, evidence_level="conversation", dedup_key=event.event_id,
                         subject_person_id=person if owner else "", binding_version=binding["version"] if binding else 0,
                         decision_reason="互关私信：结合当前消息与同会话上下文自然接话", emojis=emojis,
-                        memory_epoch=result["_memory_epoch"], owner_activity_version=context.get("owner_activity_version",""))
+                        memory_epoch=result["_memory_epoch"], owner_activity_version=context.get("owner_activity_version",""),
+                        owner_activity_sources=context.get("owner_activity_sources",()))
         self.enqueue_generated(action,result,now)
 
     def _reply(self, event: Event, person: str | None, now: float) -> None:
@@ -576,6 +593,7 @@ class SocialEngine:
             emojis=emojis, proactive=True,
             topic_class=topic,
             owner_activity_version=owner_observation["version"] if owner_observation else "",
+            owner_activity_sources=owner_observation["sources"] if owner_observation else (),
             memory_epoch=result["_memory_epoch"] if owner_observation else -1,
         )
         if owner_observation and self.owner_activity and self.owner_activity.guard(action,now):
@@ -702,7 +720,7 @@ class SocialEngine:
                 "persona": self.persona.prompt(owner, private=action.visibility == "private"), "proposed_text": action.text,
                 "channel": "private" if action.visibility == "private" else "public", "action_kind": action.kind,
                 "owner_addressed": owner, "source_message": event.text if event else None,
-                "owner_activity": (self.owner_activity.private_context(action.subject_person_id,now).get("owner_activity")
+                "owner_activity": (self.owner_activity.review_context(action,now)
                                    if action.visibility == "private" and action.owner_activity_version and self.owner_activity else None),
                 "content": document.public_context() if document else None,
                 "evidence_level": action.evidence_level,

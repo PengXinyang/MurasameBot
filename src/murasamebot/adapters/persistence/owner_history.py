@@ -13,6 +13,15 @@ CREATE TABLE IF NOT EXISTS owner_history (
 
 
 class SQLiteOwnerHistory:
+    def owner_history_sources(self, person_id, source_ids, now, retention_days):
+        ids = tuple(dict.fromkeys(source_ids))
+        if not ids or len(ids) > 90:
+            return []
+        with self.connection() as db:
+            rows = db.execute(f"SELECT payload FROM owner_history WHERE agent_id=? AND person_id=? AND record_id IN ({','.join('?' for _ in ids)}) AND eligible=1 AND expires_at>? AND viewed_at>? ORDER BY viewed_at DESC,record_id",
+                              (self.agent_id,person_id,*ids,now,now-retention_days*86400)).fetchall()
+            return [json.loads(row[0]) for row in rows]
+
     def owner_history_prune(self, person_id, now, retention_days):
         with self.connection() as db:
             db.execute("DELETE FROM owner_history WHERE agent_id=? AND person_id=? AND (viewed_at<? OR expires_at<=?)",

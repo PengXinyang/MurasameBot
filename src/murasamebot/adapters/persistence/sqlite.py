@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, closing
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 import sqlite3
@@ -580,6 +580,56 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
             if reason:
                 raise ValueError(f"草稿不能发送：{reason}")
             db.execute("UPDATE actions SET state='queued',payload=json_set(payload,'$.approved_manually',json('true')) WHERE agent_id=? AND action_id=?", (self.agent_id, action_id))
+
+    def _manual_send_row(self, db, action_id):
+        row = db.execute("SELECT * FROM actions WHERE agent_id=? AND action_id=?", (self.agent_id,action_id)).fetchone()
+        if not row or row["state"] not in {"draft","failed"}:
+            raise ValueError("仅待审核或确定失败的消息可手动发送；已受理、结果未知及发送中消息不能重发")
+        receipt = json.loads(row["receipt"]) if row["receipt"] else {}
+        if receipt.get("external_id") or (row["state"] == "failed" and receipt.get("state") != "failed"):
+            raise ValueError("缺少确定失败的依据，请先核对平台结果")
+        return row
+
+    def manual_send_target(self, action_id):
+        with self.connection() as db:
+            return Action.from_dict(json.loads(self._manual_send_row(db,action_id)["payload"]))
+
+    def requeue_action(self, original, action, now, min_gap):
+        with self.transaction() as db:
+            row = self._manual_send_row(db,original.action_id)
+            if Action.from_dict(json.loads(row["payload"])) != original:
+                raise ValueError("消息已发生变化，请刷新后重新检查")
+            action = replace(action,retry_at=max(now,(row["sent_at"] or 0)+min_gap))
+            # Restore only this version's confirmed delivery failure, never a
+            # cancelled/completed/changed task or a forgotten source.
+            if row["state"] == "failed" and action.task_id:
+                receipt = json.loads(row["receipt"])
+                db.execute("UPDATE tasks SET state='awaiting_approval' WHERE agent_id=? AND task_id=? AND version=? AND state='failed' AND reason=?",
+                           (self.agent_id,action.task_id,action.task_version,receipt.get("detail","")[:500]))
+            reason = self._validate_action(db,action,now)
+            if reason:
+                raise ValueError("消息不能发送："+reason)
+            others = db.execute("SELECT payload,dedup_key,state FROM actions WHERE agent_id=? AND action_id!=? AND state IN ('draft','queued','reviewing','sending','unknown','accepted')",
+                                (self.agent_id,action.action_id)).fetchall()
+            for other in others:
+                prior = Action.from_dict(json.loads(other["payload"]))
+                same_source = bool(action.event_id and prior.event_id == action.event_id and prior.kind == action.kind)
+                same_key = bool(action.dedup_key and other["dedup_key"] == action.dedup_key)
+                separate = {"owner_repost","like","coin","browse_reply"}
+                same_group = prior.kind == action.kind if action.kind in separate else prior.kind not in separate | {"reply","private_reply"}
+                same_content = bool(action.content and action.kind not in {"reply","browse_reply"} and same_group and prior.content == action.content)
+                same_plan = action.kind in {"autonomous_post","proactive_private"} and prior.kind == action.kind and (
+                    prior.text == action.text or other["state"] in {"sending","unknown"} or
+                    (other["state"] in {"draft","queued","reviewing"} and prior.expires_at > now))
+                if same_source or same_key or same_content or same_plan:
+                    raise ValueError("同一来源已有待发送、结果未知或已受理的消息，不能重复入队")
+            db.execute("INSERT INTO audit(agent_id,kind,detail,created_at) VALUES(?,?,?,?)",
+                       (self.agent_id,"manual_send",dumps({"action_id":action.action_id,"previous_state":row["state"],
+                        "previous_receipt":json.loads(row["receipt"]) if row["receipt"] else None,
+                        "previous_sent_at":row["sent_at"],"attempt":action.manual_attempts}),now))
+            db.execute("UPDATE actions SET state='queued',payload=?,expires_at=?,receipt='{}',sent_at=NULL,lease_until=0 WHERE agent_id=? AND action_id=?",
+                       (dumps(action.to_dict()),action.expires_at,self.agent_id,action.action_id))
+            return action
 
     def enable_review_mode(self):
         with self.connection() as db:

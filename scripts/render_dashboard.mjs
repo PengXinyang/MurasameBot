@@ -45,7 +45,10 @@ try{
     console.log(screen.output);
   }
   await evaluate("chooseTab('actions');chooseActionGroup('private');refresh()");
-  if(!await evaluate("activeActionGroup==='private'&&document.querySelector('#actionlist [data-op=approve]')?.dataset.id==='preview-private'&&!document.querySelector('#actionlist [data-op=\"publication/check\"]')"))throw Error('Private approval controls or selected category changed on refresh');
+  if(!await evaluate("activeActionGroup==='private'&&document.querySelector('#actionlist [data-op=\"actions/send\"]')?.dataset.id==='preview-private'&&!document.querySelector('#actionlist [data-op=\"publication/check\"]')"))throw Error('Private approval controls or selected category changed on refresh');
+  const controls=await evaluate(`(()=>{const row=actionRows.find(r=>r.action_id==='preview-private');const check=state=>{const node=document.createElement('div');node.innerHTML=renderActionRow({...row,state});return {send:node.querySelector('[data-op="actions/send"]')?.textContent||'',text:node.textContent}};return {draft:check('draft'),failed:check('failed'),unknown:check('unknown'),accepted:check('accepted'),sending:check('sending')}})()`);
+  if(controls.draft.send!=='审核并发送'||controls.failed.send!=='重发'||controls.unknown.send||controls.accepted.send||controls.sending.send)throw Error('Manual send controls allowed an unsafe state');
+  report.manual_send_controls={draft:true,failed:true,unknown_blocked:true,accepted_blocked:true,sending_blocked:true};
   await evaluate("document.querySelector('#action-tab-private').focus();document.querySelector('#action-tab-private').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
   if(!await evaluate("activeActionGroup==='comments'&&document.activeElement.id==='action-tab-comments'&&document.querySelector('#actionlist [data-op=\"publication/check\"]')?.dataset.id==='preview-comment'"))throw Error('Action keyboard navigation or comment check control failed');
   await evaluate("chooseActionGroup('reactions');document.querySelector('#actionlist [data-op=reject][data-id=preview-coin]').click()");

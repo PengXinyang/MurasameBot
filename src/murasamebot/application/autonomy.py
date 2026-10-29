@@ -174,7 +174,8 @@ class AutonomyService:
                         recipient_id=binding["external_id"] if binding else "",
                         subject_person_id=e.settings.owner_person_id if binding else "", binding_version=binding["version"] if binding else 0,
                         decision_reason="自主择时私信" if channel == "private" else "自主文字动态", memory_epoch=result["_memory_epoch"],
-                        owner_activity_version=context.get("owner_activity_version", ""))
+                        owner_activity_version=context.get("owner_activity_version", ""),
+                        owner_activity_sources=context.get("owner_activity_sources", ()))
                     if e.owner_activity and e.owner_activity.guard(action,now):
                         status["state"] = "invalidated"
                         continue

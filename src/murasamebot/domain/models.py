@@ -202,7 +202,9 @@ class Action:
     memory_epoch: int = -1  # recheck derived-memory invalidation immediately before dispatch
     not_before: float = 0  # Persisted earliest delivery time; never a sleeping worker.
     autonomy_version: str = ""
-    owner_activity_version: str = ""  # Private observation authorization snapshot.
+    owner_activity_version: str = ""  # Observation grant/policy revision, independent of refreshes.
+    owner_activity_sources: tuple[str, ...] = ()  # Referenced observations; never raw history.
+    manual_attempts: int = 0
     topic_class: str = "unknown"
     retry_at: float = 0
 
@@ -215,6 +217,7 @@ class Action:
         if data.get("content") is not None:
             data["content"] = ContentRef(**data["content"])
         data["mentions"] = tuple(data.get("mentions", ()))
+        data["owner_activity_sources"] = tuple(data.get("owner_activity_sources", ()))
         data["emojis"] = tuple(Emoji(**item) for item in data.get("emojis", ()))
         if isinstance(data.get("context"), dict):
             data["context"] = ContentRef(**data["context"])
