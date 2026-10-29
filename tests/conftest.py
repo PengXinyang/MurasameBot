@@ -24,7 +24,12 @@ class TestModel:
 
     def decide(self, operation, payload):
         self.calls.append((operation, deepcopy(payload)))
-        return deepcopy({"extract_intent": self.intent, "evaluate_video": self.evaluation, "reply": self.reply}[operation])
+        result = deepcopy({"extract_intent": self.intent, "evaluate_video": self.evaluation, "reply": self.reply}[operation])
+        if operation in {"reply","evaluate_video"}:
+            result.setdefault("topic_class","casual")
+            if isinstance(result.get("comment_reply"),dict):
+                result["comment_reply"].setdefault("topic_class","casual")
+        return result
 
 
 class TestPlatform:

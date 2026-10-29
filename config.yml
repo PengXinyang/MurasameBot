@@ -13,6 +13,16 @@ owner_history:
   recommendation_daily_limit: 1
   recommendation_gap_minutes: 360
 owner_person_id: owner
+requests:
+  read_gap_seconds: 1.0
+  read_max_wait_seconds: 5.0
+  account_cache_seconds: 60
+  backoff_seconds: 60
+  backoff_max_seconds: 900
+  quiet_before_seconds: 60
+  quiet_after_seconds: 15
+  log_retention_days: 7
+  log_max_rows: 20000
 database: data/murasame.sqlite3
 character_source: character/settings.yml
 character_profile: character/text_profile.yml
@@ -69,7 +79,8 @@ bilibili:
   credentials: .secrets/bilibili.json
   robot_uid: ""  # optional expected UID, checked against the logged-in account
   poll_seconds: 90  # owner publications; independently throttled
-  reply_poll_seconds: 15  # comment/@ notifications and mutual-only private inbox
+  reply_poll_seconds: 15  # comment/@ notifications; private inbox has an independent cadence
+  private_poll_seconds: 30  # independent private inbox cadence
   notification_pages: 3
   inbox_batch_limit: 90  # latest unique messages per inbox poll; overflow is a dashboard warning
   notification_max_age_hours: 24

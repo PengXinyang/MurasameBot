@@ -91,6 +91,7 @@ class PrivateMessageSource(Protocol):
 
 
 class StateStore(Protocol):
+    def defer_action(self, action_id: str, retry_at: float, reason: str) -> None: ...
     """Application-facing repository port; implementations own SQL and transactions."""
 
     def get_setting(self, key: str, default: Any = None) -> Any: ...

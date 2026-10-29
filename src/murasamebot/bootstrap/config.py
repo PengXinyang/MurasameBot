@@ -15,6 +15,7 @@ from murasamebot.application.settings import Behaviour
 from murasamebot.application.memory import MemorySettings
 from murasamebot.application.autonomy import AutonomySettings
 from murasamebot.application.owner_history import OwnerHistorySettings
+from murasamebot.application.request_policy import RequestSettings
 
 
 def merge(base: dict, override: dict) -> dict:
@@ -53,7 +54,8 @@ class Config:
         if not isinstance(raw, dict):
             raise ValueError("配置必须为 YAML 对象")
         from murasamebot.adapters.network import DIRECT_DOMAINS, GFWLIST_URL
-        raw = merge({"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
+        raw = merge({"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
+                     "bilibili":{"private_poll_seconds":30},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "limits":{"event_retry_seconds":60},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
@@ -81,6 +83,23 @@ class Config:
 
     @staticmethod
     def validate(data: dict):
+        requests = data.get("requests",asdict(RequestSettings()))
+        if not isinstance(requests,dict) or set(requests)-set(RequestSettings.__dataclass_fields__):
+            raise ValueError("未知的请求控制设置")
+        for key,low,high in (("read_gap_seconds",0.1,10),("read_max_wait_seconds",0,10),
+                ("account_cache_seconds",0,300),
+                ("backoff_seconds",30,3600),("backoff_max_seconds",60,86400),
+                ("quiet_before_seconds",0,120),("quiet_after_seconds",0,60),
+                ("log_retention_days",1,30),("log_max_rows",100,100000)):
+            value=requests.get(key)
+            if type(value) not in {int,float} or not low<=value<=high:
+                raise ValueError("请求节流、冷却或静默窗口设置超出允许范围")
+            if key not in {"read_gap_seconds","read_max_wait_seconds"} and type(value) is not int:
+                raise ValueError("请求控制计数设置必须为整数")
+        if requests["backoff_max_seconds"]<requests["backoff_seconds"]:
+            raise ValueError("最长冷却不能小于初始冷却")
+        if type(data["bilibili"].get("private_poll_seconds",30)) is not int or not 15<=data["bilibili"].get("private_poll_seconds",30)<=3600:
+            raise ValueError("私信轮询间隔需为15～3600秒")
         history = data.get("owner_history", {})
         if not isinstance(history,dict) or set(history)-set(OwnerHistorySettings.__dataclass_fields__):
             raise ValueError("未知的主人观察设置")
@@ -373,7 +392,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if set(patch.get("network", {})) - {"proxy_enabled", "proxy_url", "proxy_mode", "gfwlist_refresh_hours", "direct_domains"}:
@@ -388,7 +407,7 @@ class Config:
             raise ValueError("未知的并发处理设置")
         if set(patch.get("expressions", {})) - {"enabled", "kaomoji_enabled", "max_per_message", "cache_minutes", "preferred_keywords"}:
             raise ValueError("未知的表情设置")
-        if set(patch.get("bilibili", {})) - {"owner_new_videos", "owner_new_dynamics", "repost_owner_videos", "repost_owner_dynamics", "private_messages_enabled", "reply_poll_seconds", "poll_seconds", "read_video_subtitles", "inbox_batch_limit", "notification_pages", "private_session_pages", "private_message_pages"}:
+        if set(patch.get("bilibili", {})) - {"private_poll_seconds", "owner_new_videos", "owner_new_dynamics", "repost_owner_videos", "repost_owner_dynamics", "private_messages_enabled", "reply_poll_seconds", "poll_seconds", "read_video_subtitles", "inbox_batch_limit", "notification_pages", "private_session_pages", "private_message_pages"}:
             raise ValueError("登录信息请在本地私密配置中管理")
         candidate = merge(self.raw, patch)
         self.validate(candidate)

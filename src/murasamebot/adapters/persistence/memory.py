@@ -309,7 +309,13 @@ class SQLiteMemory:
             counts["pending_summary"] = db.execute("SELECT COUNT(*) FROM conversation_records r WHERE agent_id=? AND active=1 AND NOT EXISTS (SELECT 1 FROM memory_coverage c WHERE c.agent_id=r.agent_id AND c.record_id=r.record_id AND c.kind='summary')", (self.agent_id,)).fetchone()[0]
             counts["epoch"] = self._memory_epoch(db)
             counts["fts5_trigram"] = bool(db.execute("SELECT 1 FROM sqlite_master WHERE name='memory_fts'").fetchone())
-        counts["database_bytes"] = sum(p.stat().st_size for p in (self.path,self.path.with_name(self.path.name+"-wal")) if p.exists())
+        counts["database_bytes"] = 0
+        for path in (self.path,self.path.with_name(self.path.name+"-wal")):
+            try:
+                counts["database_bytes"] += path.stat().st_size
+            except FileNotFoundError:
+                # SQLite can remove WAL after exists() during a concurrent close.
+                pass
         return counts
 
     def memory_contexts(self):

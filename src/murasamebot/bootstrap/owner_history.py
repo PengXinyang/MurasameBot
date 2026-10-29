@@ -6,13 +6,16 @@ import time
 from murasamebot.adapters.platforms.bilibili_history import BilibiliOwnerHistory
 from murasamebot.application.owner_history import OwnerHistoryService, OwnerHistorySettings
 from murasamebot.domain.models import PlatformError
+from murasamebot.adapters.request_monitor import RequestMonitor
+from murasamebot.application.request_policy import RequestSettings
 
 
-def history_source(config):
+def history_source(config, store=None):
     path = config.root / ".secrets" / "bilibili-owner.json"
     if path.resolve() == (config.root/config.data["bilibili"]["credentials"]).resolve():
         raise ValueError("主人观察凭证不能与 AI 发布凭证共用")
-    return BilibiliOwnerHistory(path,proxy_url=config.network_proxy)
+    monitor=RequestMonitor(store,RequestSettings(**config.data["requests"]),"owner") if store else None
+    return BilibiliOwnerHistory(path,proxy_url=config.network_proxy,monitor=monitor)
 
 
 def history_service(config, store, source):
@@ -40,7 +43,7 @@ class OwnerLoginManager:
                 import qrcode
             except ImportError:
                 raise ValueError('请先安装扫码依赖：python -m pip install -e ".[login]"') from None
-            source = history_source(config)
+            source = history_source(config,store)
             try:
                 url,key = source.start_login()
                 image = BytesIO()

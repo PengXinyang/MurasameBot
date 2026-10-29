@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from hashlib import md5
 from io import BytesIO
@@ -20,7 +21,8 @@ from murasamebot.adapters.platforms.bilibili_comments import read_comment_chain
 from murasamebot.adapters.platforms.bilibili_emojis import BilibiliEmojiMixin
 from murasamebot.adapters.platforms.bilibili_publication import BilibiliPublicationMixin, classify_comment
 
-from murasamebot.domain.models import Action, ContentRef, Document, Event, ImageRef, PlatformError as CorePlatformError, Receipt
+from murasamebot.domain.models import Action, ContentRef, Document, Event, ImageRef, PlatformError as CorePlatformError, Receipt, stable_id
+from murasamebot.domain.topics import local_topic
 
 
 API = "https://api.bilibili.com"
@@ -44,8 +46,8 @@ MIXIN_INDEX = (46,47,18,2,53,8,23,32,15,50,10,31,58,3,45,35,27,43,5,49,33,9,42,1
 
 
 class PlatformError(CorePlatformError):
-    def __init__(self, message, *, code="platform_error", pause=False):
-        super().__init__(message, code=code, pause=pause, platform="bilibili")
+    def __init__(self, message, *, code="platform_error", pause=False, retry_at=0):
+        super().__init__(message, code=code, pause=pause, platform="bilibili",retry_at=retry_at)
 
 
 def plain(value: object) -> str:
@@ -66,7 +68,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                  max_age_hours: int = 24, client: httpx.Client | None = None,
                  proxy_url: str = "", image_client: httpx.Client | None = None,
                  private_session_pages: int = 3, private_message_pages: int = 3, private_max_age_hours: int = 24,
-                 read_video_subtitles: bool = True, inbox_batch_limit: int = 90, proactive_recipient_id: str = ""):
+                 read_video_subtitles: bool = True, inbox_batch_limit: int = 90, proactive_recipient_id: str = "", monitor=None):
+        self.monitor = monitor
         self.credentials_path = credentials_path
         self.expected_uid = str(expected_uid or "")
         self.pages = max(1, min(pages, 20))
@@ -81,7 +84,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         self.proactive_recipient_id = str(proactive_recipient_id)
         self.poll_warnings = []
 
-        self.client = client or network_client(proxy_url=proxy_url, headers=WEB_HEADERS,
+        self.client = client or network_client(proxy_url=proxy_url, monitor=monitor, headers=WEB_HEADERS,
                                                timeout=httpx.Timeout(25, connect=10))
         if client is not None:
             self.client.headers.update(WEB_HEADERS)
@@ -129,7 +132,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             response = self.client.request("POST" if data is not None else "GET", url,
                                            params=params, data=data)
             if response.status_code in {403, 412, 429}:
-                raise PlatformError(f"平台限制访问（HTTP {response.status_code}），已停止出站", code="risk_control", pause=True)
+                read_limit = response.status_code==429 and data is None
+                raise PlatformError(f"平台限制访问（HTTP {response.status_code}）", code="read_limited" if read_limit else "risk_control", pause=not read_limit,
+                                    retry_at=self.monitor.retry_at(urlparse(url).path) if read_limit and self.monitor else 0)
             if response.status_code != 200:
                 raise PlatformError(f"平台 HTTP {response.status_code}")
             payload = response.json()
@@ -139,8 +144,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             raise PlatformError("平台连接或响应解析失败") from None
         code = payload.get("code", -1)
         if code != 0:
-            pause = code in {-101, -111, -403, -412, -509, -352, -401, 12015}
-            raise PlatformError(f"平台接口错误 {code}", code=str(code), pause=pause)
+            pause = code in {-101, -111, -403, -412, -352, -401, 12015} or code==-509 and data is not None
+            raise PlatformError(f"平台接口错误 {code}", code=str(code), pause=pause,
+                                retry_at=self.monitor.retry_at(urlparse(url).path) if code==-509 and self.monitor and data is None else 0)
         result = payload.get("data") or {}
         if not isinstance(result, dict):
             raise PlatformError("平台数据格式无效")
@@ -158,6 +164,21 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         self._account = {"uid": uid, "name": str(data.get("uname", "")), "money": data.get("money")}
         self._cache_wbi_key(data)
         return self._account
+
+    def read_account(self) -> dict:
+        if self.monitor is None:
+            return self.account()
+        key="bili_identity_cache:"+stable_id(self.credentials)
+        cached=self.monitor.store.get_setting(key,{})
+        if cached.get("until",0)>self.monitor.clock():
+            account=cached.get("account",{})
+            expected=self.expected_uid or self.credentials.get("DedeUserID","")
+            if expected and account.get("uid")==expected:
+                self._account=account
+                return account
+        account=self.account()
+        self.monitor.store.set_setting(key,{"account":account,"until":self.monitor.clock()+self.monitor.settings.account_cache_seconds})
+        return account
 
     def _cache_wbi_key(self, nav: dict) -> bool:
         wbi = nav.get("wbi_img")
@@ -270,7 +291,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         return replace(event, content=ref)
 
     def notifications(self, now: float) -> list[Event]:
-        uid = (self._account or self.account())["uid"]
+        uid = (self._account or self.read_account())["uid"]
         events = {}
         for endpoint, kind in (("/x/msgfeed/reply", "reply"), ("/x/msgfeed/at", "mention")):
             params = {"ps": 30, "platform": "web"}
@@ -320,7 +341,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         return None
 
     def owner_content(self, owner_external_id: str, now: float) -> list[Event]:
-        uid = (self._account or self.account())["uid"]
+        uid = (self._account or self.read_account())["uid"]
         data, _ = self._request("/x/polymer/web-dynamic/v1/feed/space", params={"host_mid": numeric(owner_external_id), "offset": "", "timezone_offset": -480})
         result = []
         for item in data.get("items") or []:
@@ -395,6 +416,10 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         if ref.kind == "video":
             data, _ = self._request("/x/web-interface/view", params={"aid": oid})
             bvid = str(data.get("bvid", ""))
+            if local_topic(plain(data.get("title")),data.get("desc"),data.get("tname")) == "sensitive":
+                return Document(ref,plain(data.get("title")),str(data.get("desc") or "")[:3000],"metadata",
+                                author_id=str((data.get("owner") or {}).get("mid", "")),
+                                category_id=str(data.get("tid", "")),topic_class="sensitive")
             transcripts = []
             pages = (data.get("pages") or [{"cid": data.get("cid")}])[:3] if self.read_video_subtitles else []
             for page in pages:
@@ -477,6 +502,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         for category in category_ids:
             data, _ = self._request("/x/web-interface/newlist", params={"rid": numeric(category), "pn": 1, "ps": min(limit, 30)})
             for row in data.get("archives") or []:
+                if local_topic(plain(row.get("title")),row.get("desc"),row.get("tname")) == "sensitive":
+                    continue
                 aid = str(row.get("aid") or "")
                 if aid.isdigit():
                     ref = ContentRef("bilibili", "video", aid)
@@ -484,6 +511,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         return list(refs.values())[:limit]
 
     def search(self, query: str, category_ids: Sequence[str], limit: int) -> list[ContentRef]:
+        if local_topic(query) == "sensitive":
+            return []
         refs = {}
         for category in list(category_ids) or ["0"]:
             data, _ = self._request("/x/web-interface/wbi/search/type", signed=True, params={
@@ -491,6 +520,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                 "page_size": min(limit, 20), "order": "totalrank",
             })
             for row in data.get("result") or []:
+                if local_topic(plain(row.get("title")),row.get("description"),row.get("typename")) == "sensitive":
+                    continue
                 aid = str(row.get("aid") or "")
                 if aid.isdigit():
                     ref = ContentRef("bilibili", "video", aid)
@@ -516,7 +547,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         if action.kind in {"like", "coin"}:
             return self._send_reaction(action, before_write=before_write)
         if action.kind in {"private_reply", "proactive_private"}:
-            return self._send_private(action, before_write=before_write)
+            with self.monitor.essential_reads() if self.monitor else nullcontext():
+                return self._send_private(action, before_write=before_write)
         if action.kind in {"owner_repost", "artwork_share", "autonomous_post"}:
             return self._send_dynamic(action, before_write=before_write)
         if action.content is None or action.content.kind not in COMMENT_TYPES:

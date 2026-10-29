@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -75,9 +75,10 @@ SCHEMA_LOCK = Lock()
 
 
 from murasamebot.adapters.persistence.owner_history import SQLiteOwnerHistory, HISTORY_SCHEMA
+from murasamebot.adapters.persistence.requests import SQLiteRequests, REQUEST_SCHEMA
 
 
-class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory):
+class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests):
     def __init__(self, path: str | Path, agent_id: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,7 +98,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory):
                 # v1 copy before the transactional migration; never overwrite it.
                 backup = self.path.with_name(self.path.name + ".v1-backup")
                 if not backup.exists():
-                    with sqlite3.connect(backup) as target:
+                    with closing(sqlite3.connect(backup)) as target:
                         db.backup(target)
                 db.executescript("BEGIN IMMEDIATE;\n" + MEMORY_SCHEMA + "\nUPDATE schema_version SET version=2;\nCOMMIT;")
                 version = 2
@@ -107,6 +108,8 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory):
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='owner_history'").fetchone():
                 db.executescript(HISTORY_SCHEMA)
             db.execute("DELETE FROM owner_history WHERE expires_at<=?", (time.time(),))
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='platform_requests'").fetchone():
+                db.executescript(REQUEST_SCHEMA)
 
     @contextmanager
     def connection(self):
@@ -440,7 +443,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory):
             rows = db.execute(f"SELECT rowid AS queue_order,payload,kind,{self._action_ordering_key('actions')} AS ordering_key FROM actions WHERE agent_id=? AND state='queued' ORDER BY CASE kind WHEN 'reply' THEN 0 WHEN 'private_reply' THEN 0 WHEN 'recommendation' THEN 1 ELSE 2 END,created_at", (self.agent_id,)).fetchall()
             for row in rows:
                 action = Action.from_dict(json.loads(row["payload"]))
-                if action.not_before > now:
+                if max(action.not_before,action.retry_at) > now:
                     continue
                 if action.kind in {"autonomous_post", "proactive_private"} and action.kind not in autonomous_kinds:
                     continue
@@ -683,7 +686,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory):
         with self.connection() as db:
             events = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM events WHERE agent_id=? GROUP BY state", (self.agent_id,))}
             actions = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM actions WHERE agent_id=? GROUP BY state", (self.agent_id,))}
-            ready_actions = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND COALESCE(json_extract(payload,'$.not_before'),0)<=?", (self.agent_id,now)).fetchone()[0]
+            ready_actions = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND COALESCE(json_extract(payload,'$.not_before'),0)<=? AND COALESCE(json_extract(payload,'$.retry_at'),0)<=?", (self.agent_id,now,now)).fetchone()[0]
             reviews = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND (COALESCE(json_extract(payload,'$.review_state'),'')!='passed' OR (?='independent' AND json_extract(payload,'$.review_method')='inline'))", (self.agent_id,review_strategy)).fetchone()[0]
             pending = db.execute(f"SELECT state,next_at,{self._event_ordering_key('events')} AS ordering_key,"
                                  "EXISTS(SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') AS paused "

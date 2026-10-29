@@ -108,6 +108,7 @@ class Document:
     visual: VisualEvidence | None = None
     parent: ContentRef | None = None
     comment_context: CommentContext | None = None
+    topic_class: str = "unknown"
 
     def public_context(self) -> dict[str, Any]:
         return asdict(self)
@@ -202,6 +203,8 @@ class Action:
     not_before: float = 0  # Persisted earliest delivery time; never a sleeping worker.
     autonomy_version: str = ""
     owner_activity_version: str = ""  # Private observation authorization snapshot.
+    topic_class: str = "unknown"
+    retry_at: float = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -262,11 +265,12 @@ class Artwork:
 
 
 class PlatformError(RuntimeError):
-    def __init__(self, message: str, *, code: str = "platform_error", pause: bool = False, platform: str = ""):
+    def __init__(self, message: str, *, code: str = "platform_error", pause: bool = False, platform: str = "", retry_at: float = 0):
         super().__init__(message)
         self.code = code
         self.pause = pause
         self.platform = platform
+        self.retry_at = retry_at
 
 
 class ModelError(RuntimeError):

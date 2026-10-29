@@ -69,7 +69,12 @@ class RoutingTransport(httpx.BaseTransport):
             self.proxied.close()
 
 
-def client(*, proxy_url: str | ProxyPolicy = "", **kwargs) -> httpx.Client:
+def client(*, proxy_url: str | ProxyPolicy = "", monitor=None, **kwargs) -> httpx.Client:
+    if monitor is not None:
+        from murasamebot.adapters.request_monitor import MonitoredTransport
+        inner = (RoutingTransport(proxy_url) if isinstance(proxy_url,ProxyPolicy) and proxy_url.proxy_url
+                 else httpx.HTTPTransport(proxy=(proxy_url if isinstance(proxy_url,str) else "") or None,trust_env=False))
+        return httpx.Client(transport=MonitoredTransport(inner,monitor),trust_env=False,follow_redirects=False,**kwargs)
     if isinstance(proxy_url, ProxyPolicy) and proxy_url.proxy_url:
         return httpx.Client(transport=RoutingTransport(proxy_url), trust_env=False, follow_redirects=False, **kwargs)
     # Strings retain compatibility for independently used adapters/tests.

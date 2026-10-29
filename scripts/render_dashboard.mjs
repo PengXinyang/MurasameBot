@@ -86,6 +86,12 @@ try{
   if(!await evaluate("(async()=>{const c=await api('config');return c.owner_history.poll_seconds===180&&c.owner_history.recommendation_topics.length===2&&!c.owner_history.enabled&&!c.owner_history.recommendations_enabled})()"))throw Error('Owner history settings round-trip failed');
   await evaluate("(async()=>{document.querySelector('[data-history=poll_seconds]').value='300';await document.querySelector('#owner-history-save').onclick()})()");
   report.owner_history={controls:12,settings_save_roundtrip:true,collection_default_off:true,recommendations_default_off:true};
+  await until(()=>evaluate("document.querySelector('#private-poll-seconds')?.value==='30'"));
+  if(!await evaluate("document.querySelector('[data-request=quiet_before_seconds]').value==='60'&&document.querySelectorAll('[data-request]').length===9"))throw Error('Request controls did not load');
+  await evaluate("(async()=>{document.querySelector('#private-poll-seconds').value='45';await document.querySelector('#request-save').onclick()})()");
+  if(!await evaluate("(async()=>{const c=await api('config');return c.bilibili.private_poll_seconds===45&&c.requests.quiet_before_seconds===60})()"))throw Error('Request controls did not save');
+  await evaluate("(async()=>{document.querySelector('#private-poll-seconds').value='30';await document.querySelector('#request-save').onclick()})()");
+  report.request_controls={fields:9,private_poll_save_roundtrip:true,quiet_before_seconds:60};
   if(report.errors.length)throw Error('Browser reported JavaScript exceptions');
   await writeFile(plan.report,JSON.stringify(report,null,2));
 }finally{

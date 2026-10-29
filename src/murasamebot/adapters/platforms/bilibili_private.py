@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import json
+import math
 import re
 import time
 from uuid import uuid4
@@ -87,7 +88,7 @@ class BilibiliPrivateMixin:
         return list(peers.values())
 
     def private_messages(self, now: float, *, since: float, cursors: Mapping[str, int], baseline=False) -> PrivateInbox:
-        uid = (self._account or self.account())["uid"]
+        uid = (self._account or self.read_account())["uid"]
         updates, events, denied = {}, {}, 0
         cutoff = max(since, now - self.private_max_age_hours * 3600)
         for session in self._private_sessions():
@@ -166,6 +167,25 @@ class BilibiliPrivateMixin:
         # No owner exception, no relationship cache. This is the last remote read.
         if not self.allows_private_reply(action.account_id, action.recipient_id):
             return Receipt("failed", detail="当前不是互相关注关系，禁止回复私信")
+        if action.kind == "proactive_private":
+            data,_ = self._request(VC_API+"/svr_sync/v1/svr_sync/fetch_session_msgs",params={
+                "talker_id":action.recipient_id,"session_type":1,"size":30,"mobi_app":"web","build":0})
+            rows=data.get("messages")
+            if not isinstance(rows,list):
+                return Receipt("failed",detail="无法确认主人最新来信，取消主动开场")
+            stamps=[]
+            for row in rows:
+                try:stamp=float(row.get("timestamp",0))
+                except (TypeError,ValueError,AttributeError):
+                    return Receipt("failed",detail="最新会话时间无效，取消主动开场")
+                if not math.isfinite(stamp) or stamp<=0:
+                    return Receipt("failed",detail="最新会话时间无效，取消主动开场")
+                stamps.append(stamp)
+                if (str(row.get("sender_uid"))==action.recipient_id and str(row.get("receiver_id"))==action.account_id
+                        and row.get("receiver_type")==1 and stamp>=action.created_at):
+                    return Receipt("failed",detail="主人在计划后已有新来信，取消主动开场，等待正常收件")
+            if data.get("has_more") and (not stamps or min(stamps)>action.created_at):
+                return Receipt("failed",detail="最新会话覆盖不足，取消主动开场")
         if before_write is not None and not before_write():
             return Receipt("failed", detail="私信发送前最终检查未通过")
         fields = {"msg[sender_uid]": action.account_id, "msg[receiver_id]": action.recipient_id,

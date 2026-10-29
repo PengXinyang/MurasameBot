@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.runtime import build, prepare_store, readiness
 from murasamebot.bootstrap.owner_history import OwnerLoginManager, history_status, history_source, history_service
+from murasamebot.application.request_policy import RequestSettings
 from murasamebot.domain.models import PlatformError
 
 
@@ -85,12 +86,14 @@ def handler_for(config_path: Path, token: str):
 
         def do_GET(self):
             path = urlparse(self.path).path
-            if path in {"/assets/dashboard.css","/assets/owner-history.js"} or path in CHARACTER_ASSETS:
+            if path in {"/assets/dashboard.css","/assets/owner-history.js","/assets/request-controls.js"} or path in CHARACTER_ASSETS:
                 if self.headers.get("Host", "").split(":")[0] not in {"127.0.0.1", "localhost"}:
                     self.response(401, {"error": "仅限本机访问"})
                     return
                 try:
-                    if path == "/assets/owner-history.js":
+                    if path == "/assets/request-controls.js":
+                        self.response(200,Path(__file__).with_name("request-controls.js").read_bytes(),content_type="text/javascript; charset=utf-8")
+                    elif path == "/assets/owner-history.js":
                         self.response(200,Path(__file__).with_name("owner-history.js").read_bytes(),content_type="text/javascript; charset=utf-8")
                     elif path == "/assets/dashboard.css":
                         asset = Path(__file__).with_name("dashboard.css")
@@ -119,6 +122,9 @@ def handler_for(config_path: Path, token: str):
                 config = Config(config_path)
                 if path == "/api/config":
                     self.response(200, config.public())
+                elif path == "/api/requests":
+                    self.response(200,{"settings":config.data["requests"],"private_poll_seconds":config.data["bilibili"]["private_poll_seconds"],
+                        "status":prepare_store(config).request_status(time.time(),RequestSettings(**config.data["requests"]))})
                 elif path == "/api/owner-history":
                     self.response(200, history_status(config,prepare_store(config)))
                 elif path == "/api/owner-history/qr":
@@ -175,7 +181,7 @@ def handler_for(config_path: Path, token: str):
                 elif path == "/api/owner-history/clear":
                     store.owner_history_reset(config.data["owner_person_id"],time.time())
                 elif path == "/api/owner-history/sync":
-                    source = history_source(config)
+                    source = history_source(config,store)
                     try:
                         history_service(config,store,source).sync(time.time(),force=True)
                         self.response(200,history_status(config,store))
@@ -201,9 +207,11 @@ def handler_for(config_path: Path, token: str):
                         runtime.close()
                 elif path == "/api/pause":
                     store.set_setting("paused", True)
+                    store.audit("platform_paused","管理台手动暂停全部工作",time.time())
                 elif path == "/api/resume":
                     store.set_setting("paused", False)
                     store.set_setting("platform_paused:bilibili", False)
+                    store.audit("platform_resumed","管理台手动恢复工作；接口冷却仍按各自期限执行",time.time())
                 elif path == "/api/approve":
                     store.approve_action(str(data["id"]), time.time())
                 elif path == "/api/reject":

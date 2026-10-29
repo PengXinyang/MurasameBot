@@ -25,6 +25,9 @@ class WorkerCoordinator:
         runtime = self.build(config, concurrency=self.model_limit)
         try:
             if kind == "observation":
+                history_monitor=getattr(runtime.owner_history.source,"monitor",None)
+                if history_monitor and not history_monitor.allowed("owner_history"):
+                    return False
                 return runtime.owner_history.sync(time.time())
             if kind == "memory":
                 return runtime.engine.memory_service.maintain()
@@ -37,6 +40,8 @@ class WorkerCoordinator:
             if not runtime.store.acquire_lease("background_decision", time.time(), 1200):
                 return False
             try:
+                if getattr(runtime,"network_monitor",None) and not runtime.network_monitor.allowed("exploration"):
+                    return False
                 if getattr(runtime,"owner_history",None):
                     runtime.owner_history.recommend(runtime.engine,time.time())
                 runtime.engine.autonomy.run(time.time())

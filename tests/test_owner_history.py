@@ -166,7 +166,7 @@ def test_dashboard_auth_config_and_qr_never_exposed(tmp_path,monkeypatch):
         def poll_login(self,key,b):assert b["external_id"]=="424242";return "waiting"
         def close(self):pass
         def authorization(self,b):raise PlatformError("not logged in")
-    monkeypatch.setattr("murasamebot.bootstrap.owner_history.history_source",lambda c:FakeSource())
+    monkeypatch.setattr("murasamebot.bootstrap.owner_history.history_source",lambda c,*args:FakeSource())
     server=ThreadingHTTPServer(("127.0.0.1",0),handler_for(path,"local-token"))
     Thread(target=server.serve_forever,daemon=True).start()
     try:
@@ -240,7 +240,7 @@ def test_qr_success_enables_sync_expiry_and_binding_changes_are_rejected(tmp_pat
         def start_login(self):return "https://passport.bilibili.com/test","key"
         def poll_login(self,key,b):return "success"
         def close(self):pass
-    monkeypatch.setattr("murasamebot.bootstrap.owner_history.history_source",lambda c:Source())
+    monkeypatch.setattr("murasamebot.bootstrap.owner_history.history_source",lambda c,*args:Source())
     manager=OwnerLoginManager()
     manager.start(config,store)
     assert manager.poll(config,store)["state"]=="success"
@@ -285,3 +285,39 @@ def test_retention_reduction_prunes_records(factory,now):
     assert store.owner_history_rows("owner",now)
     store.owner_history_prune("owner",now,1)
     assert not store.owner_history_rows("owner",now)
+
+
+@pytest.mark.parametrize("url",[
+    "https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=test-key",
+    "https://passport.bilibili.com/h5-app/passport/login/scan?qrcode_key=test-key",
+    "https://account.bilibili.com:443/h5/account-h5/auth/scan-web?qrcode_key=test-key",
+])
+def test_qr_accepts_current_account_host_and_legacy_passport_host(tmp_path,url):
+    def handle(request):
+        assert str(request.url)==QR_START and request.method=="GET"
+        return reply({"url":url,"qrcode_key":"test-key"})
+    source=history_client(tmp_path,handle)
+    assert source.start_login()==(url,"test-key")
+    assert not source.path.exists()
+
+
+@pytest.mark.parametrize("url,key",[
+    ("http://account.bilibili.com/h5/account-h5/auth/scan-web","key"),
+    ("https://account.bilibili.com.evil.invalid/scan","key"),
+    ("https://evil.invalid/account.bilibili.com/scan","key"),
+    ("https://name:password@account.bilibili.com/scan","key"),
+    ("https://@account.bilibili.com/scan","key"),
+    ("https://account.bilibili.com:444/scan","key"),
+    ("https://account.bilibili.com:bad/scan","key"),
+    ("https://account.bilibili.com/scan\n","key"),
+    ("https://account.bilibili.com\\@evil.invalid/scan","key"),
+    ("https://account.bilibili.com/scan",None),
+    ("https://account.bilibili.com/scan",42),
+    ("https://account.bilibili.com/scan"," "),
+    ({"url":"https://account.bilibili.com/scan"},"key"),
+])
+def test_qr_rejects_foreign_urls_credentials_ports_and_invalid_keys(tmp_path,url,key):
+    source=history_client(tmp_path,lambda request:reply({"url":url,"qrcode_key":key}))
+    with pytest.raises(PlatformError) as exc:
+        source.start_login()
+    assert exc.value.code=="owner_qr_invalid" and not source.path.exists()

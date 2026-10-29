@@ -22,6 +22,9 @@ from murasamebot.application.review import review_satisfied
 from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.owner_history import history_source, history_service
 from murasamebot.domain.models import Action, PlatformError, stable_id
+from murasamebot.domain.topics import blocked, document_topic, local_topic
+from murasamebot.adapters.request_monitor import RequestMonitor
+from murasamebot.application.request_policy import RequestSettings
 
 
 LOG = logging.getLogger("murasame")
@@ -69,6 +72,7 @@ class Runtime:
     artwork: ArtDiscovery | None = None
     resources: tuple = ()
     owner_history: object = None
+    network_monitor: object = None
 
     def record_inbox_warnings(self, channel: str, now: float):
         warnings = getattr(self.platform, "take_warnings", lambda: [])()
@@ -81,10 +85,7 @@ class Runtime:
         current[channel] = warnings
         self.store.set_setting("inbox_warnings", current)
 
-    def poll(self, now: float | None = None):
-        now = time.time() if now is None else now
-        if self.engine.paused("bilibili"):
-            return
+    def _poll_notifications(self, now):
         try:
             events = self.platform.notifications(now)
             self.record_inbox_warnings("notifications", now)
@@ -102,6 +103,16 @@ class Runtime:
             if exc.pause:
                 self.engine.pause_platform(exc, "bilibili")
             LOG.warning("通知读取未完成：%s", exc)
+
+    def poll(self, now: float | None = None):
+        now = time.time() if now is None else now
+        if self.engine.paused("bilibili"):
+            return
+        if self.network_monitor is None or (self.network_monitor.allowed("notifications",now) and
+                self.store.claim_poll_interval("notifications",now,self.config.data["bilibili"]["reply_poll_seconds"])):
+            self._poll_notifications(now)
+        if self.network_monitor and not self.network_monitor.allowed("owner_feed",now):
+            return
         if self.engine.paused("bilibili"):
             return
         owner = self.store.binding(self.config.data["owner_person_id"], "bilibili")
@@ -174,6 +185,11 @@ class Runtime:
         now = time.time() if now is None else now
         if self.engine.paused("bilibili") or not self.config.data["bilibili"].get("private_messages_enabled", True):
             return
+        if self.network_monitor:
+            if not self.network_monitor.allowed("private_inbox",now):
+                return
+            if not self.store.claim_poll_interval("private_inbox",now,self.config.data["bilibili"]["private_poll_seconds"]):
+                return
         try:
             uid = self.platform.account_id or self.platform.account()["uid"]
             key = f"private_inbox:{uid}"
@@ -213,7 +229,8 @@ class Runtime:
 
 def build(config: Config, *, concurrency=None) -> Runtime:
     store = prepare_store(config)
-    history_reader = history_source(config)
+    monitor=RequestMonitor(store,RequestSettings(**config.data["requests"]))
+    history_reader = history_source(config,store)
     history = history_service(config,store,history_reader)
     b = config.data["bilibili"]
     platform = BilibiliAdapter((config.root / b["credentials"]).resolve(), expected_uid=str(b.get("robot_uid", "")),
@@ -221,7 +238,7 @@ def build(config: Config, *, concurrency=None) -> Runtime:
                                private_session_pages=b.get("private_session_pages", 3), private_message_pages=b.get("private_message_pages", 3),
                                private_max_age_hours=b.get("private_message_max_age_hours", 24),
                                read_video_subtitles=b.get("read_video_subtitles", True), inbox_batch_limit=b.get("inbox_batch_limit", 90),
-                               proactive_recipient_id=(store.binding(config.data["owner_person_id"], "bilibili") or {}).get("external_id", ""))
+                               proactive_recipient_id=(store.binding(config.data["owner_person_id"], "bilibili") or {}).get("external_id", ""), monitor=monitor)
     m = config.data["model"]
     model = ChatCompletionsModel(base_url=m["base_url"], name=m["name"], api_key=m["api_key"], store=store,
                                  timezone=config.data["timezone"], daily_limit=m["daily_call_limit"],
@@ -250,6 +267,16 @@ def build(config: Config, *, concurrency=None) -> Runtime:
                     kaomoji_enabled=e.get("kaomoji_enabled",True)), {"bilibili": platform}, store)
     def action_policy(action: Action, now: float) -> str:
         current = Config(config.path)
+        if action.visibility == "public" and action.content:
+            event = store.event(action.event_id) if action.event_id else None
+            document = store.cached_document(action.content,now)
+            binding = store.binding(current.data["owner_person_id"],action.platform)
+            owner = bool(binding and ((event and event.actor_id == binding["external_id"])
+                or (not action.reply_to and document and document.author_id == binding["external_id"])
+                or (action.reply_to and document and any(c.get("id")==action.reply_to and c.get("author_id")==binding["external_id"] for c in document.comments))))
+            if (blocked(action.topic_class,owner) or blocked(document_topic(document,event.text if event else ""),owner)
+                    or local_topic(action.text)=="sensitive"):
+                return "公开话题限制：敏感、非主人严肃话题或未完成分类；人工批准也不放行"
         if action.owner_activity_version:
             reason = history_service(current,store,history_reader).guard(action,now)
             if reason:
@@ -303,11 +330,12 @@ def build(config: Config, *, concurrency=None) -> Runtime:
     for source in a.get("sources", []):
         sources[source] = PixivSource(a.get("pixiv_session", ""), proxy_url=config.network_proxy) if source == "pixiv" else XSource(a.get("x_bearer_token", ""), proxy_url=config.network_proxy)
     artwork = ArtDiscovery(ArtSettings.from_config(a), sources, store, model, persona)
-    return Runtime(config, store, platform, model, engine, artwork, tuple(resources), history)
+    return Runtime(config, store, platform, model, engine, artwork, tuple(resources), history, monitor)
 
 
 def readiness(runtime: Runtime) -> dict:
     return {
+        "requests": runtime.store.request_status(time.time(),RequestSettings(**runtime.config.data["requests"])),
         "memory": {**runtime.store.memory_status(),"health":runtime.store.get_setting("memory_health",{}),
                    "last_contexts":[row for row in runtime.store.memory_contexts()]},
         "autonomy": {c:runtime.store.get_setting("autonomy_status:"+c) for c in ("dynamic","private")},

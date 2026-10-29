@@ -1,0 +1,16 @@
+const requestPanel=document.createElement('div');
+requestPanel.className='panel settings-card';
+requestPanel.style.marginTop='24px';
+requestPanel.addEventListener('input',event=>event.stopPropagation());
+requestPanel.addEventListener('change',event=>event.stopPropagation());
+requestPanel.innerHTML=`<h2>B站请求与发送前静默</h2><p class="notice">统计实际接口调用，记录端点、状态码和耗时，不记录请求参数、正文、Cookie或密钥。读取限流按通道冷却；登录失效和写入风控仍会暂停平台。</p><p id="request-summary" role="status">正在读取…</p><div id="request-fields" class="field-grid"></div><button id="request-save">保存请求设置</button><button id="request-refresh">刷新诊断</button><details><summary>最近30次接口请求</summary><div id="request-recent"></div></details>`;
+document.querySelector('#settings-messages').append(requestPanel);
+const requestLabels={read_gap_seconds:['共享GET最小间隔（秒）',0.1,10,0.1],read_max_wait_seconds:['单次读取最多等待（秒）',0,10,0.1],account_cache_seconds:['收件登录校验缓存（秒，发送前仍复验）',0,300,1],backoff_seconds:['读取限流初始冷却（秒）',30,3600,1],backoff_max_seconds:['读取限流最长退避（秒）',60,86400,1],quiet_before_seconds:['主动发送前暂停采集（秒）',0,120,1],quiet_after_seconds:['主动发送后暂停采集（秒）',0,60,1],log_retention_days:['诊断保留天数',1,30,1],log_max_rows:['诊断最多记录数',100,100000,1]};
+document.querySelector('#request-fields').innerHTML=Object.entries(requestLabels).map(([key,[label,min,max,step]])=>`<div class="field"><label>${esc(label)}</label><input data-request="${key}" type="number" min="${min}" max="${max}" step="${step}"></div>`).join('')+'<div class="field"><label>私信独立轮询间隔（秒）</label><input id="private-poll-seconds" type="number" min="15" max="3600"></div>';
+async function refreshRequests(loadFields=false){const value=await api('requests'),status=value.status;if(loadFields){document.querySelectorAll('[data-request]').forEach(n=>n.value=String(value.settings[n.dataset.request]));document.querySelector('#private-poll-seconds').value=String(value.private_poll_seconds)}
+document.querySelector('#request-summary').textContent=`最近一分钟 ${status.last_minute} 次接口调用`+(status.platform_paused?' · B站已暂停：'+(status.pause_reason?.code||'请查看活动记录')+' · '+time(status.pause_reason?.at):status.quiet?.until?' · 计划发送静默中，至 '+time(status.quiet.until):' · 常规轮询')+(status.cooldowns.length?' · 冷却：'+status.cooldowns.map(c=>c.channel+' 至 '+time(c.until)+'（'+c.reason+'）').join('；'):'');
+document.querySelector('#request-recent').innerHTML=status.recent.map(r=>`<div class="row">${esc(r.role)} · ${esc(r.method)} ${esc(r.host+r.path)}<div class="meta">${esc(time(r.created_at))} · ${esc(r.duration_ms)}ms · HTTP ${esc(r.http_status??'—')} · code ${esc(r.api_code??'—')} ${esc(r.error)}</div></div>`).join('')||'<p class="empty">尚无接口记录；无实际请求时计数不会增加。</p>'}
+document.querySelector('#request-save').onclick=async()=>{try{await api('config',{requests:Object.fromEntries([...document.querySelectorAll('[data-request]')].map(n=>[n.dataset.request,Number(n.value)])),bilibili:{private_poll_seconds:Number(document.querySelector('#private-poll-seconds').value)}});await refreshRequests(true);notice('请求设置已保存')}catch(e){notice(e.message,true)}};
+document.querySelector('#request-refresh').onclick=()=>refreshRequests().catch(e=>notice(e.message,true));
+refreshRequests(true).catch(e=>notice(e.message,true));
+setInterval(()=>{if(document.querySelector('#settings').classList.contains('active'))refreshRequests().catch(()=>{})},15000);

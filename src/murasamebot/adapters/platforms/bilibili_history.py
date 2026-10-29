@@ -17,6 +17,8 @@ NAV = "https://api.bilibili.com/x/web-interface/nav"
 HISTORY = "https://api.bilibili.com/x/web-interface/history/cursor"
 QR_START = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
 QR_POLL = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
+# The API still lives on passport, but now also issues account-host QR pages.
+QR_PAGE_HOSTS = {"passport.bilibili.com", "account.bilibili.com"}
 
 
 class _HideQR(logging.Filter):
@@ -28,9 +30,10 @@ logging.getLogger("httpx").addFilter(_HideQR())
 
 
 class BilibiliOwnerHistory:
-    def __init__(self, path: Path, *, proxy_url="", client=None):
+    def __init__(self, path: Path, *, proxy_url="", client=None, monitor=None):
+        self.monitor=monitor
         self.path = path
-        self.client = client or network_client(proxy_url=proxy_url, timeout=httpx.Timeout(20,connect=8),
+        self.client = client or network_client(proxy_url=proxy_url, monitor=monitor, timeout=httpx.Timeout(20,connect=8),
             headers={"User-Agent":"Mozilla/5.0", "Referer":"https://www.bilibili.com/"})
 
     def close(self):
@@ -74,11 +77,20 @@ class BilibiliOwnerHistory:
     def start_login(self):
         self.client.cookies.clear()
         data,_ = self._get(QR_START)
-        url = str(data.get("url") or "")
-        parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.hostname != "passport.bilibili.com" or parsed.username or len(url)>4096 or not data.get("qrcode_key"):
-            raise PlatformError("扫码信息无效",code="owner_qr_invalid")
-        return url, str(data["qrcode_key"])
+        url, key = data.get("url"), data.get("qrcode_key")
+        valid = False
+        if (isinstance(url,str) and 0<len(url)<=4096 and url==url.strip()
+                and not re.search(r"[\x00-\x20\x7f\\]",url)
+                and isinstance(key,str) and 0<len(key)<=256 and not re.search(r"\s",key)):
+            try:
+                parsed = urlparse(url)
+                valid = (parsed.scheme == "https" and parsed.hostname in QR_PAGE_HOSTS
+                         and parsed.port in {None,443} and parsed.username is None and parsed.password is None)
+            except ValueError:
+                pass
+        if not valid:
+            raise PlatformError("B站返回的扫码地址不受支持，请更新程序或重试",code="owner_qr_invalid")
+        return url, key
 
     def poll_login(self, key, binding):
         if not binding:

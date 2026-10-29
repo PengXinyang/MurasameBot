@@ -194,6 +194,7 @@ def test_adapter_proactive_private_uses_only_configured_mutual_owner(tmp_path):
     def handle(request):
         if request.url.path.endswith('/nav'):return httpx.Response(200,json={"code":0,"data":nav_data()})
         if request.url.path.endswith('/relation'):return httpx.Response(200,json={"code":0,"data":{"mid":123,"attribute":6}})
+        if request.url.path.endswith('/fetch_session_msgs'):return httpx.Response(200,json={"code":0,"data":{"messages":[]}})
         assert request.method=='POST';posts.append(request)
         return httpx.Response(200,json={"code":0,"data":{"msg_key":"777"}})
     bot=BilibiliAdapter(credentials(tmp_path),proactive_recipient_id="123",client=httpx.Client(transport=httpx.MockTransport(handle)))

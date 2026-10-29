@@ -13,6 +13,7 @@ from murasamebot.application.vision import VisionService
 from murasamebot.application.expressions import ExpressionService
 from murasamebot.application.memory import MemoryService
 from murasamebot.application.autonomy import AutonomyService
+from murasamebot.domain.topics import blocked, combined_topic, document_topic, local_topic
 from murasamebot.application.review import inline_review, review_satisfied
 from murasamebot.domain.models import Action, ContentRef, Document, Event, ModelError, Persona, PlatformError, PolicyError, Receipt, stable_id
 from murasamebot.ports import ActionSink, ContentProvider, ModelGateway, PrivateMessageAccess, StateStore
@@ -71,6 +72,8 @@ class SocialEngine:
         return text + "".join(e.token for e in emojis), emojis
 
     def enqueue_generated(self, action, result, now):
+        if action.visibility == "public" and action.content and local_topic(action.text) == "sensitive":
+            return False
         if action.owner_activity_version and (not self.owner_activity or self.owner_activity.guard(action,now)):
             return False
         draft = self.settings.draft
@@ -85,6 +88,8 @@ class SocialEngine:
     def pause_platform(self, exc: PlatformError, fallback: str):
         if exc.pause:
             self.store.set_setting(f"platform_paused:{exc.platform or fallback}", True)
+            self.store.set_setting(f"platform_pause_reason:{exc.platform or fallback}",{"code":exc.code,"at":time.time()})
+            self.store.audit("platform_paused",f"{exc.platform or fallback}: {exc.code}",time.time())
 
     def ingest(self, event: Event, *, baseline: bool = False) -> bool:
         if not event.event_id or not event.actor_id or not event.conversation_id:
@@ -292,6 +297,10 @@ class SocialEngine:
         self.enqueue_generated(action,result,now)
 
     def _reply(self, event: Event, person: str | None, now: float) -> None:
+        owner = person == self.settings.owner_person_id
+        if blocked(local_topic(event.text),owner):
+            self.store.audit("topic_skipped","当前消息触发公开话题限制",now)
+            return
         owner_content = event.kind == "owner_content"
         if owner_content:
             binding = self.store.binding(self.settings.owner_person_id, event.platform)
@@ -300,6 +309,10 @@ class SocialEngine:
             if event.content and self.store.has_action_for_content(event.content.key, now):
                 return
         document = self.document(event.content, now, reply_to=event.reply_to, root=event.thread_root, context=event.share_content) if event.content else None
+        local = document_topic(document,event.text)
+        if blocked(local,owner):
+            self.store.audit("topic_skipped","原内容或父评论链触发公开话题限制",now)
+            return
         if owner_content and document and document.author_id and document.author_id != event.actor_id:
             raise PolicyError("读取到的内容作者与主人内容事件不一致")
         if owner_content and document and document.ref.kind == "video" and not self.can_evaluate(document):
@@ -317,9 +330,16 @@ class SocialEngine:
             **context,
             "max_characters": self.settings.max_comment_characters,
             "owner_content": owner_content,
+            "topic_owner_exception": owner,
         }, event.platform, event.account_id, "public", now)
         if result.get("decision") not in {"reply", "skip"}:
             raise PolicyError("回复决策类型无效")
+        topic = combined_topic(local,result.get("topic_class"))
+        if blocked(topic,owner):
+            self.store.audit("topic_skipped","模型判断需跳过公开话题，或分类缺失",now)
+            return
+        if document:
+            document = replace(document,topic_class=topic)
         if result.get("decision") == "skip":
             if document:
                 self._queue_reactions(document, now, result.get("interested") is True, event=event)
@@ -336,6 +356,7 @@ class SocialEngine:
             binding_version=binding["version"] if owner_content else 0,
             decision_reason=str(result.get("reason", ""))[:200], dedup_key=event.event_id, emojis=emojis,
             memory_epoch=result["_memory_epoch"],
+            topic_class=topic,
         )
         self.enqueue_generated(action,result,now)
         if document:
@@ -350,13 +371,19 @@ class SocialEngine:
         document = self.document(event.content, now)
         if document.author_id != event.actor_id:
             raise PolicyError("不能转发作者未验证的主人内容")
+        if blocked(document_topic(document),True):
+            return
         result, options = self.message_decision("owner_repost", {"persona": self.persona.prompt(True),
+                                   "topic_owner_exception": True,
                                    "content": document.public_context(), "max_characters": self.settings.max_comment_characters},
                                    event.platform, event.account_id, "dynamic", now)
         if result.get("decision") == "skip":
             return
         if result.get("decision") != "share":
             raise PolicyError("转发决策类型无效")
+        topic = combined_topic(document_topic(document),result.get("topic_class"))
+        if blocked(topic,True):
+            return
         text, emojis = self.message_text(result, options, self.settings.max_comment_characters)
         action = Action(stable_id(self.settings.agent_id, "repost", event.content.key), self.settings.agent_id,
                         event.platform, event.account_id, event.content, text, now,
@@ -364,10 +391,12 @@ class SocialEngine:
                         event_id=event.event_id, subject_person_id=self.settings.owner_person_id,
                         binding_version=binding["version"], evidence_level=document.evidence_level,
                         source_author_id=event.actor_id, source_kind="video" if event.share_content and event.share_content.kind == "video" else "dynamic",
-                        dedup_key=f"repost:{event.content.key}", decision_reason="转发已验证主人的新内容", emojis=emojis)
+                        dedup_key=f"repost:{event.content.key}", decision_reason="转发已验证主人的新内容", emojis=emojis,topic_class=topic)
         self.enqueue_generated(action,result,now)
 
     def _queue_reactions(self, document: Document, now: float, interested: bool, *, event: Event | None = None) -> None:
+        if document_topic(document) == "sensitive":
+            return
         if not interested or not self.can_evaluate(document):
             return
         kinds = []
@@ -387,7 +416,7 @@ class SocialEngine:
                             now + self.settings.action_ttl_minutes * 60, kind=kind, context=document.parent,
                             amount=1 if kind == "coin" else 0, proactive=event is None,
                             event_id=event.event_id if event else "", evidence_level=document.evidence_level,
-                            decision_reason="根据实际读取的内容判断感兴趣", dedup_key=f"{kind}:{target.key}")
+                            decision_reason="根据实际读取的内容判断感兴趣", dedup_key=f"{kind}:{target.key}", topic_class=document.topic_class)
             self.store.enqueue_action(action, draft=self.settings.draft, now=now)
 
     def run_due_task(self, now: float | None = None) -> bool:
@@ -481,6 +510,11 @@ class SocialEngine:
 
     def _evaluate(self, document: Document, now: float, task: dict | None = None, *, owner_observation=None) -> bool:
         binding = self.store.binding(self.settings.owner_person_id, document.ref.provider)
+        owner = bool(binding and document.author_id == binding["external_id"])
+        local = document_topic(document)
+        if blocked(local,owner):
+            self.store.record_view(document.ref,"话题限制：跳过严肃或敏感内容",now)
+            return False
         # This payload is deliberately independent of the original private message.
         readable = replace(document, comments=tuple(c for c in document.comments if c.get("author_id") != self.settings.account_id))
         result, options = self.message_decision("evaluate_video", {
@@ -492,8 +526,15 @@ class SocialEngine:
             "max_characters": self.settings.max_recommendation_characters if task else self.settings.max_comment_characters,
             "comment_videos": self.settings.comment_videos and not owner_observation, "reply_comments": self.settings.reply_comments and task is None and not owner_observation,
             "recommend_owner": self.settings.recommend_owner,
+            "topic_owner_exception": owner,
         }, document.ref.provider, self.settings.account_id, "public", now)
         decision = result.get("decision", "skip")
+        topic = combined_topic(local,result.get("topic_class"))
+        if blocked(topic,owner):
+            self.store.record_view(document.ref,"话题限制：模型跳过或分类缺失",now)
+            return False
+        document = replace(document,topic_class=topic)
+        readable = replace(readable,topic_class=topic)
         if decision not in {"skip", "comment", "reply", "recommend"}:
             raise PolicyError("视频行为选择无效")
         reason = str(result.get("reason", ""))[:200]
@@ -533,6 +574,7 @@ class SocialEngine:
             event_id=task["event_id"] if task else "", binding_version=binding["version"] if decision == "recommend" else 0,
             evidence_level=document.evidence_level, decision_reason=reason, dedup_key=f"proactive:{document.ref.key}",
             emojis=emojis, proactive=True,
+            topic_class=topic,
             owner_activity_version=owner_observation["version"] if owner_observation else "",
             memory_epoch=result["_memory_epoch"] if owner_observation else -1,
         )
@@ -544,12 +586,17 @@ class SocialEngine:
         target = next((c for c in document.comments if c.get("id") == str(result.get("reply_to", "")) and c.get("author_id") != self.settings.account_id), None)
         if target is None:
             raise PolicyError("只能回复实际读取的其他用户评论")
+        binding = self.store.binding(self.settings.owner_person_id,document.ref.provider)
+        owner = bool(binding and target.get("author_id") == binding["external_id"])
+        topic = combined_topic(document_topic(document,target.get("text","")),result.get("topic_class"))
+        if blocked(topic,owner):
+            return False
         text, emojis = self.message_text(result, options, self.settings.max_comment_characters)
         root = target.get("root") or target["id"]
         action = Action(stable_id(self.settings.agent_id, self.settings.account_id, "browse_reply", document.ref.key, target["id"]),
                         self.settings.agent_id, document.ref.provider, self.settings.account_id, document.ref, text, now,
                         now+self.settings.action_ttl_minutes*60, kind="browse_reply", reply_to=target["id"], thread_root=root,
-                        evidence_level=document.evidence_level, emojis=emojis, proactive=True,
+                        evidence_level=document.evidence_level, emojis=emojis, proactive=True, topic_class=topic,
                         conversation_id=f"{document.ref.provider}:{self.settings.account_id}:{document.ref.key}:thread:{root}",
                         decision_reason="主动回应已读取的评论", dedup_key=f"browse_reply:{document.ref.key}:{target['id']}")
         return self.enqueue_generated(action,result,now)
@@ -625,12 +672,17 @@ class SocialEngine:
         except PlatformError as exc:
             if exc.pause:
                 self.pause_platform(exc, action.platform)
+            elif exc.code in {"read_deferred","read_limited","-509"}:
+                self.store.defer_action(action.action_id,max(now+1,exc.retry_at or now+60),"发送前读取暂缓，等待通道恢复；未执行写入")
+                return True
             receipt = Receipt("failed", detail=str(exc))
         except Exception as exc:
             # Transport-level implementation must distinguish definite failures. Otherwise conservative.
             receipt = Receipt("unknown", detail=f"发送未能确认：{type(exc).__name__}")
         if receipt.pause:
             self.store.set_setting(f"platform_paused:{action.platform}", True)
+            self.store.set_setting(f"platform_pause_reason:{action.platform}",{"code":"write_risk","at":now})
+            self.store.audit("platform_paused",f"{action.platform}: 写入回执要求暂停",now)
         self.store.finish_action(action.action_id, receipt, now)
         return True
 

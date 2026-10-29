@@ -18,7 +18,7 @@ def test_comment_and_repost_independently_queue_and_binding_revocation_cancels_s
     ref = ContentRef("bilibili", "dynamic", "700")
     platform.documents[ref.key] = Document(ref, "主人新动态", "今天分享练习心得", "text", "424242")
     original = model.decide
-    model.decide = lambda op, payload: {"decision": "share", "text": "主人更新啦，吾辈也来分享这份小欢喜。"} if op == "owner_repost" else original(op, payload)
+    model.decide = lambda op, payload: {"decision": "share", "topic_class":"casual", "text": "主人更新啦，吾辈也来分享这份小欢喜。"} if op == "owner_repost" else original(op, payload)
     comment = Event("owner-comment", "bilibili", "robot", "424242", "owner-post", "owner_content", "新动态", now, content=ref)
     repost = replace(comment, event_id="owner-repost", kind="owner_repost")
     engine.ingest(comment)

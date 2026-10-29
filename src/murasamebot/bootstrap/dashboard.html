@@ -74,4 +74,4 @@ async function rebuildMemory(){try{const scope=selectedMemoryScope();if(confirm(
 function exportMemory(){if(!memoryResults.length){notice('请先查询需要导出的原文');return}const blob=new Blob([memoryResults.map(r=>JSON.stringify(r)).join('\n')+'\n'],{type:'application/x-ndjson;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='murasame-memory-query.jsonl';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 
 loadConfig().then(refresh).catch(e=>notice(e.message,true));setInterval(refresh,15000);
-</script><script src="/assets/owner-history.js"></script></body></html>
+</script><script src="/assets/owner-history.js"></script><script src="/assets/request-controls.js"></script></body></html>

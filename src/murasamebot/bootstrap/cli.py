@@ -23,6 +23,8 @@ def show(value):
 
 
 def worker_loop(config_path: Path, stop: StopEvent, *, once=False):
+    import os
+    prepare_store(Config(config_path)).audit("worker_started",f"工作循环启动 pid={os.getpid()}",time.time())
     if once:
         runtime = build(Config(config_path))
         try:
@@ -153,6 +155,7 @@ def main(argv=None):
             store.set_setting("paused", paused)
             if not paused:
                 store.set_setting("platform_paused:bilibili", False)
+            store.audit("platform_resumed" if not paused else "platform_paused","命令行人工操作",time.time())
             show({"paused": paused})
             return
         if args.command == "bind":

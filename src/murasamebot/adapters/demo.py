@@ -20,8 +20,8 @@ class ScenarioModel:
         if operation == "extract_intent":
             return {"kind": "request", "topic": "摄影入门", "sensitive": False, "not_before": None, "interval_days": 0}
         if operation == "evaluate_video":
-            return {"decision": "recommend", "text": "这期把曝光和构图讲得很清楚，吾辈觉得挺适合入门。", "reason": "实际字幕符合摄影入门主题"}
-        return {"decision": "reply", "text": "吾辈看这段说明，关键还是先把曝光和构图的关系弄清楚。", "reason": "回应原评论"}
+            return {"decision": "recommend", "topic_class":"casual", "text": "这期把曝光和构图讲得很清楚，吾辈觉得挺适合入门。", "reason": "实际字幕符合摄影入门主题"}
+        return {"decision": "reply", "topic_class":"casual", "text": "吾辈看这段说明，关键还是先把曝光和构图的关系弄清楚。", "reason": "回应原评论"}
 
 
 class ScenarioPlatform:

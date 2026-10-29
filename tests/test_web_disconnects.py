@@ -51,11 +51,13 @@ def test_disconnected_get_does_not_send_a_second_400_response(tmp_path, monkeypa
 def test_post_committed_before_disconnect_is_not_replayed(tmp_path, monkeypatch):
     path = write_config(tmp_path)
     writes = []
-    monkeypatch.setattr(web, "prepare_store", lambda cfg: SimpleNamespace(set_setting=lambda key, value: writes.append((key, value))))
+    audits=[]
+    monkeypatch.setattr(web, "prepare_store", lambda cfg: SimpleNamespace(set_setting=lambda key, value: writes.append((key, value)),audit=lambda *args:audits.append(args)))
     writer = DisconnectingWriter(ConnectionAbortedError, 2)
     handler = request(path, method="POST", url="/api/pause", writer=writer, body=b"{}")
     handler.do_POST()
     assert writes == [("paused", True)]
+    assert len(audits)==1 and audits[0][0]=="platform_paused"
     assert writer.calls == 2
     assert handler.close_connection
 

@@ -167,7 +167,7 @@ def test_owner_repost_uses_generation_verdict(factory,now):
     def decide(op,payload):
         if op=="owner_repost":
             model.calls.append((op,payload))
-            return {"decision":"share","text":"主人更新啦，吾辈来分享。",**verdict()}
+            return {"decision":"share","topic_class":"casual","text":"主人更新啦，吾辈来分享。",**verdict()}
         return original(op,payload)
     model.decide=decide
     document=replace(platform.read(platform.ref),author_id="424242")
