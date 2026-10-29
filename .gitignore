@@ -19,5 +19,8 @@ config.local.yml
 *.sqlite3-wal
 *.sqlite3-shm
 
-# Local reports and design documents are kept in the parent workspace.
-/docs/
+# Project memory is versioned; keep local evidence and private captures outside it.
+/docs/local/
+/docs/private/
+/docs/**/*.har
+/docs/**/*.log

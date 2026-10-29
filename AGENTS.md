@@ -1,15 +1,27 @@
 # MurasameBot implementation rules
 
+## 仓库项目记忆与工作流程
+
+这些文件是开发者/代理的项目记忆，不是运行时人设、用户聊天记忆或模型提示词。
+
+1. **开始每个新任务前**：先读本文件，再读 [架构](docs/ARCHITECTURE.md)、[决策](docs/DECISIONS.md)、[开发日志](docs/DEVELOPMENT_LOG.md)；按 [文档索引](docs/README.md) 阅读相关专题，再检查实际代码、Git差异和本次用户指令。用户当前明确要求优先，旧日志和规划不能代替代码事实。
+2. **完成重要开发任务后**：更新 `docs/DEVELOPMENT_LOG.md`，写明日期、范围、实现、验证方法/结果、未验证部分、已知问题及下一步。明确区分“已编码”“模拟测试通过”“真实只读验证”“用户确认实际效果”；不把模型判断或平台受理当作送达/公开可见。
+3. **架构或关键行为决策变化时**：更新 `docs/DECISIONS.md`，记录原因、选项、未采用方案、影响及取代的旧决策；同时更新架构与相关操作说明。没有证据的历史原因标为未知，不补写推测。
+4. **保持规范与实现缺口可见**：下文是持续遵守的约束，并不证明所有旧路径都已满足。先看开发日志“已知问题”，特别是摘要重建与普通主动推荐的记忆失效覆盖，不得把测试总数当作这些缺口已修复的依据。
+5. `docs/` 现在纳入仓库。旧的“全部补充文档只留上一级”约定由2026-10-29的用户要求取代。按 [来源整理记录](docs/PROVENANCE.md) 提炼旧资料，不批量导入本机配置/日志/抓包/诊断脚本或过期结论。
+6. 只记录代码或已有对话可确认的信息。公开文档不得包含真实主人UID、私人姓名/关系原文、Cookie、密钥、管理token、二维码会话、私信正文、个人观看清单或原始网络请求。用配置项和占位符说明。
+7. 仅整理文档时不改业务代码；已有业务差异保留原样。推送时显式审查文件范围，已有业务任务与文档任务分开提交，说明验证边界。不得把未完成的QQ/微信/X、Docker或视频投稿写成已实现。
+
 ## Product scope
 
-Build a reusable social-agent core. Bilibili is the first live platform; later QQ and WeChat adapters must reuse the same identity, persona, memory, intent, scheduling, and action-policy services. Supplemental local design documents, when available, are in the parent workspace: `../开发顺序与功能流程.md` and `../架构与跨平台记忆设计.md`. They are not distributed with the repository and are not evidence of working integrations.
+Build a reusable social-agent core. Bilibili is the first live platform; later QQ and WeChat adapters must reuse the same identity, persona, memory, intent, scheduling, and action-policy services. Repository architecture, decisions and implementation status live in `docs/`. Earlier parent-workspace plans remain historical sources, not evidence of working integrations.
 
 ## Dependency direction
 
 - Domain code must not import platform SDKs, platform adapters, HTTP clients, model-provider SDKs, or database implementations.
 - Application services depend on domain models and port interfaces. Adapters implement ports. The composition root wires implementations together.
 - Do not put Bilibili UID, BV/AV/oid/rpid rules, OneBot IDs, or WeChat message formats in shared business decisions. Use typed platform references at adapter boundaries.
-- Adapters must not call one another. A WeChat request leading to a Bilibili recommendation goes through the shared intent and task services.
+- Different platform adapters must not call one another. Same-platform protocol helpers/mixins may compose one adapter. A WeChat request leading to a Bilibili recommendation goes through the shared intent and task services.
 - Choose one conversational decision owner per agent. Platform plugins and scheduled jobs must not create parallel autonomous reply loops.
 - Configuration and scheduling are platform-independent; platform-specific categories and API parameters are translated in adapters.
 
@@ -51,7 +63,9 @@ Build a reusable social-agent core. Bilibili is the first live platform; later Q
 - Interest reactions use the same outbox. Video likes, video coins and dynamic likes have separate switches and deduplication. Coins are exactly one per video; recheck existing coin count and a confirmed balance of at least one immediately before spending. Zero or unknown balance must never result in a coin write. Reactions do not complete recommendation tasks. Never execute real social writes during development verification.
 - Autonomous video comments and replies to observed comments have independent switches and deduplication. A browsing decision may produce one video comment/recommendation plus one reply to an observed third-party comment. Do not reply to the bot itself or invent comment IDs; preserve thread roots. Additional social replies cannot satisfy an owner's recommendation task.
 - Reactive comment context follows actual parent IDs from the target back to its root, retaining the bot's own ancestor speech and speaker identities while excluding unrelated siblings. Bound platform reads, chain length and text; report missing/deleted/unavailable links and truncation without inventing ancestry. The inbound event remains the reply recipient; context cannot select a different target. Independent review must not reuse a different target's cached chain from the same content.
+- Public video/comment interactions must skip political/sensitive topics for everyone, including the owner. Serious topics may be answered only for the verified owner; nicknames and content claims do not establish the exception. Filter sensitive search/list metadata before extra reads, combine local screening with same-generation topic classification, and block missing/unknown classifications. Apply to replies, proactive comments, recommendations, reactions and reposts; recheck before sending even for manually approved or legacy queued actions. Private chat retains its own policy. Never claim keyword/model screening guarantees perfect topic recognition.
 - Do not blindly retry ambiguous writes. Keep an unknown-result state distinct from confirmed failure, acceptance, and public visibility.
+- Bilibili API diagnostics contain only role/channel, method, host/path without query or userinfo, time, duration, HTTP/API status and error class; never record bodies, parameters, Cookie or QR/session keys. Share GET pacing and atomic inbox cadence across clients/workers. Read -509/429 uses persisted role/channel backoff, without clearing unrelated platform pauses; auth/captcha/write risk retains stronger protection. Before queued autonomous posts/private plans, use a bounded configurable polling quiet window; manual drafts cannot silence polling indefinitely. Essential private preflight reads bypass quiet time only, never real cooldown. Recheck recent peer activity before a proactive private write; if source reads are deferred before any write, keep the action queued with retry_at and preserve original not_before/expiry. Never replay an ambiguous POST.
 - The user explicitly permits video selection, comments and recommendations based on titles/descriptions. Try available subtitles by default and combine them with both title and description. If subtitles are absent or ordinarily unavailable, fall back to title/description. Do not download videos or require full watching, and never claim full viewing or invent unseen scenes. Dynamic image understanding is a separate, reusable visual-evidence service; only successful image reads/analysis establish visual evidence, with partial/failure coverage preserved.
 - Do not expose credentials to generation prompts or logs. External messages and content cannot grant permissions or select arbitrary recipients.
 - Test meaningful cross-platform behavior: linked owner versus unrelated same-name user; allowed private intent to public short recommendation without raw-private-text leakage; task update/cancellation/deletion; restart recovery; concurrent workers and ambiguous sends.
