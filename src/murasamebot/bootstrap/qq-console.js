@@ -5,6 +5,26 @@ function loadQQSettings() {
   for (const key of ['quiet_seconds', 'max_wait_seconds', 'max_reply_messages']) {
     document.querySelector(`[data-qq-setting="${key}"]`).value = q[key];
   }
+  for (const node of document.querySelectorAll('[data-qq-autonomy]')) {
+    const key = node.dataset.qqAutonomy, value = config.qq_autonomy[key];
+    node.value = key === 'windows' ? value.map(w => w.start+'-'+w.end).join('\n')
+      : key === 'weekdays' ? value.join(',') : key === 'topics' ? value.join('\n') : String(value);
+  }
+}
+
+async function saveQQAutonomy() {
+  try {
+    const settings = Object.fromEntries([...document.querySelectorAll('[data-qq-autonomy]')].map(node => {
+      const key = node.dataset.qqAutonomy, value = node.value;
+      return [key, key === 'windows' ? value.split('\n').filter(s=>s.trim()).map(s=>{const [start,end]=s.trim().split('-');return {start,end};})
+        : key === 'weekdays' ? value.split(/[,，]/).filter(s=>s.trim()).map(Number)
+        : key === 'topics' ? value.split('\n').map(s=>s.trim()).filter(Boolean)
+        : node.type === 'number' ? Number(value) : value === 'true'];
+    }));
+    await api('config', {qq_autonomy:settings});
+    await loadConfig(); await refresh();
+    notice('QQ主动私聊设置已保存；保持QQ平台服务运行，丛雨会选择发送、稍后发送或跳过。');
+  } catch (e) { notice(e.message, true); }
 }
 
 async function saveQQSettings() {
@@ -31,6 +51,12 @@ async function checkQQConnection() {
 
 function renderQQConsole(data) {
   const connection = data.connection, buffered = data.buffered;
+  const initiative = data.autonomy || {}, status = initiative.status || {};
+  const stateNames = {waiting:'等待合适时机',skipped:'本轮选择不发送',planned:'已安排主动私聊',error:'检查失败，等待重试',conversation_busy:'正在聊天，暂不打扰',relationship_blocked:'账号或主人好友关系未确认',budget_exhausted:'今日判断额度已用完',duplicate_skipped:'跳过重复内容',outside_window:'不在允许时段',invalidated:'来源或授权已变化',private_disabled:'主动私聊已关闭'};
+  document.querySelector('#qq-autonomy-status').textContent = !config.qq_autonomy.private_enabled ? '主动私聊已关闭。'
+    : !data.enabled ? '主动私聊已开启；请先启动QQ平台服务。'
+    : status.state ? `${stateNames[status.state] || status.state} · 上次判断 ${time(status.at)}${status.planned_at ? ' · 计划时间 '+time(status.planned_at) : ''} · 下次检查 ${time(status.next_at)}`
+    : '主动私聊已开启，等待工作循环首次判断。';
   document.querySelector('#qq-module-state').textContent = data.enabled ? '模块已启用' : '模块未启用';
   document.querySelector('#qq-overview-state').textContent = data.enabled ? '已启用 · 私聊与消息中管理' : '未启用';
   document.querySelector('#qq-robot').textContent = connection.robot_id || '未配置';

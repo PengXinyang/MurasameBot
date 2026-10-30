@@ -58,3 +58,11 @@ class ChatBatches:
             for row in selected:
                 db.execute("UPDATE chat_inbox SET state='flushed',payload='' WHERE agent=? AND id=?",(self.store.agent_id,row["id"]))
             return True
+
+    def activity(self, account, peer, version, now):
+        with self.store.connection() as db:
+            row = db.execute("""SELECT MAX(received),COUNT(CASE WHEN state='pending' THEN 1 END)
+                FROM chat_inbox WHERE agent=? AND account=? AND peer=? AND version=? AND epoch=?
+                AND state IN ('pending','flushed') AND received>?""",
+                (self.store.agent_id,account,peer,version,self.store.get_setting("memory_epoch",0),now-86400)).fetchone()
+            return {"last_at":row[0] or 0,"pending":row[1]}

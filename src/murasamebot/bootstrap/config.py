@@ -45,6 +45,37 @@ def load_dotenv(path: Path) -> None:
         os.environ.setdefault(key.strip(), value)
 
 
+def validate_autonomy(autonomy):
+    if not isinstance(autonomy,dict) or set(autonomy)-set(AutonomySettings.__dataclass_fields__):
+        raise ValueError("未知的自主发布设置")
+    for key in ("dynamic_enabled","private_enabled"):
+        if type(autonomy.get(key)) is not bool:
+            raise ValueError("自主发布开关必须为布尔值")
+    for key,low,high in (("decision_interval_minutes",1,1440),("daily_decision_limit",1,100),
+            ("max_delay_minutes",0,1440),("dynamic_daily_limit",1,20),("private_daily_limit",1,20),
+            ("dynamic_gap_minutes",1,10080),("private_gap_minutes",1,10080),
+            ("private_idle_minutes",1,1440),("max_post_characters",1,1000)):
+        value=autonomy.get(key)
+        if type(value) is not int or not low<=value<=high:
+            raise ValueError(f"自主发布 {key} 需要为 {low} 至 {high} 的整数")
+    windows=autonomy.get("windows")
+    if not isinstance(windows,list) or not 1<=len(windows)<=8:
+        raise ValueError("自主发布需要1至8个允许时段")
+    for window in windows:
+        if not isinstance(window,dict) or set(window)!={"start","end"}:
+            raise ValueError("自主发布时段需要start和end")
+        for value in window.values():
+            if not isinstance(value,str) or not re.fullmatch(r"\d{2}:\d{2}",value):
+                raise ValueError("自主发布时段格式为HH:MM")
+            daytime.fromisoformat(value)
+    days=autonomy.get("weekdays")
+    if not isinstance(days,list) or not days or any(type(d) is not int or d not in range(7) for d in days):
+        raise ValueError("自主发布星期需要0至6的列表")
+    topics=autonomy.get("topics")
+    if not isinstance(topics,list) or not 1<=len(topics)<=20 or any(not isinstance(t,str) or not t.strip() or len(t)>120 for t in topics):
+        raise ValueError("自主动态主题需要1至20条简短文字")
+
+
 class Config:
     def __init__(self, path: str | Path):
         self.path = Path(path).resolve()
@@ -58,6 +89,7 @@ class Config:
         raw = merge({"platforms":{"bilibili":{"enabled":True}},"social":asdict(SocialSettings()),"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
                      "bilibili":{"private_poll_seconds":30},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
+                     "qq_autonomy":{**asdict(AutonomySettings()),"daily_decision_limit":32,"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "limits":{"event_retry_seconds":60},
                      "browsing":{"recommendation_only":True,"min_video_views":8000,"min_video_comments":20},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
@@ -147,35 +179,10 @@ class Config:
         review = data.get("review",{})
         if not isinstance(review,dict) or set(review)-{"strategy"} or not isinstance(review.get("strategy","inline"),str) or review.get("strategy","inline") not in {"inline","independent"}:
             raise ValueError("审核策略只能为 inline（生成时判断）或 independent（独立模型复核）")
-        autonomy = data.get("autonomy", {})
-        if not isinstance(autonomy,dict) or set(autonomy)-set(AutonomySettings.__dataclass_fields__):
-            raise ValueError("未知的自主发布设置")
-        for key in ("dynamic_enabled","private_enabled"):
-            if type(autonomy.get(key)) is not bool:
-                raise ValueError("自主发布开关必须为布尔值")
-        for key,low,high in (("decision_interval_minutes",1,1440),("daily_decision_limit",1,100),
-                ("max_delay_minutes",0,1440),("dynamic_daily_limit",1,20),("private_daily_limit",1,20),
-                ("dynamic_gap_minutes",1,10080),("private_gap_minutes",1,10080),
-                ("private_idle_minutes",1,1440),("max_post_characters",1,1000)):
-            value=autonomy.get(key)
-            if type(value) is not int or not low<=value<=high:
-                raise ValueError(f"自主发布 {key} 需要为 {low} 至 {high} 的整数")
-        windows=autonomy.get("windows")
-        if not isinstance(windows,list) or not 1<=len(windows)<=8:
-            raise ValueError("自主发布需要1至8个允许时段")
-        for window in windows:
-            if not isinstance(window,dict) or set(window)!={"start","end"}:
-                raise ValueError("自主发布时段需要start和end")
-            for value in window.values():
-                if not isinstance(value,str) or not re.fullmatch(r"\d{2}:\d{2}",value):
-                    raise ValueError("自主发布时段格式为HH:MM")
-                daytime.fromisoformat(value)
-        days=autonomy.get("weekdays")
-        if not isinstance(days,list) or not days or any(type(d) is not int or d not in range(7) for d in days):
-            raise ValueError("自主发布星期需要0至6的列表")
-        topics=autonomy.get("topics")
-        if not isinstance(topics,list) or not 1<=len(topics)<=20 or any(not isinstance(t,str) or not t.strip() or len(t)>120 for t in topics):
-            raise ValueError("自主动态主题需要1至20条简短文字")
+        validate_autonomy(data.get("autonomy", {}))
+        validate_autonomy(data.get("qq_autonomy", {}))
+        if data["qq_autonomy"]["dynamic_enabled"]:
+            raise ValueError("QQ自主设置当前只支持主人私聊")
         memory = data.get("memory", {})
         if not isinstance(memory,dict) or set(memory)-set(MemorySettings.__dataclass_fields__):
             raise ValueError("未知的记忆设置")
@@ -449,7 +456,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"qq_autonomy", "qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if not isinstance(patch.get("qq",{}),dict) or set(patch.get("qq",{})) - {"quiet_seconds","max_wait_seconds","max_reply_messages"}:

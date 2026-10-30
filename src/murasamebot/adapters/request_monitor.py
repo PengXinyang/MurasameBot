@@ -42,7 +42,7 @@ class RequestMonitor:
     def allowed(self,channel,now=None):
         now=self.clock() if now is None else now
         if self.store.request_cooldown(self.scope(channel)).get("until",0)>now:return False
-        return self.essential or channel not in POLL_CHANNELS or not self.store.polling_quiet(now,self.settings.quiet_before_seconds,self.settings.quiet_after_seconds)
+        return self.essential or channel not in POLL_CHANNELS or not self.store.polling_quiet(now,self.settings.quiet_before_seconds,self.settings.quiet_after_seconds,platform="bilibili")
 
     def before(self,request):
         if request.method!="GET":return

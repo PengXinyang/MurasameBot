@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from murasamebot.domain.models import Event, ImageRef, PlatformError, Receipt
+from murasamebot.domain.models import Event, ImageRef, PlatformError, Receipt, stable_id
 
 IMAGE_HOSTS = ("multimedia.nt.qq.com", "multimedia.nt.qq.com.cn", "gchat.qpic.cn", "c2cpicdw.qpic.cn")
 
@@ -86,8 +86,19 @@ class QQAdapter:
         return Event(message_id, "qq", self.account_id, peer, f"qq:{self.account_id}:{peer}",
             "private_message", "".join(text), now, "private", images=tuple(images), reply_limit=self.settings["max_reply_messages"])
 
+    @staticmethod
+    def private_conversation(account_id, peer_id):
+        return stable_id("conversation", "qq", account_id, f"qq:{account_id}:{peer_id}")
+
+    def pending_private_activity(self, account_id, peer_id, now):
+        from murasamebot.adapters.persistence.chat_batches import ChatBatches
+        binding = self.store.binding(self.owner, "qq")
+        if not binding or binding["external_id"] != peer_id or account_id != self.account_id:
+            return {"pending": 1, "last_at": now}
+        return ChatBatches(self.store).activity(account_id, peer_id, binding["version"], now)
+
     def send(self, action, mentions, *, before_write=None):
-        if action.kind not in {"private_reply", "task_result"} or action.platform != "qq" or mentions or not self.allows_private_reply(action.account_id, action.recipient_id):
+        if action.kind not in {"private_reply", "task_result", "proactive_private"} or action.platform != "qq" or mentions or not self.allows_private_reply(action.account_id, action.recipient_id):
             return Receipt("failed", detail="QQ收件人或好友权限无效")
         if before_write and not before_write():
             return Receipt("failed", detail="发送前策略校验失败")

@@ -218,4 +218,5 @@ def build_module(config, store):
     artwork = ArtDiscovery(ArtSettings.from_config(a), sources, store, None, None)
     return BilibiliModule("bilibili", platform, CAPABILITIES, (history_reader,), history,
                           history_reader, artwork, monitor, b["reply_poll_seconds"],
-                          private_content_provider=PrivateVideoProvider(platform))
+                          private_content_provider=PrivateVideoProvider(platform),
+                          autonomy_private_enabled=b.get("private_messages_enabled", True))

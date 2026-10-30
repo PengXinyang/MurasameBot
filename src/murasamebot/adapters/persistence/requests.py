@@ -64,12 +64,13 @@ class SQLiteRequests:
             db.execute("DELETE FROM platform_requests WHERE agent_id=? AND id NOT IN (SELECT id FROM platform_requests WHERE agent_id=? ORDER BY id DESC LIMIT ?)",
                        (self.agent_id,self.agent_id,max_rows))
 
-    def polling_quiet(self, now, before, after):
+    def polling_quiet(self, now, before, after, *, platform=None):
         if before==0 and after==0:
             return {}
         with self.connection() as db:
-            rows=db.execute("SELECT action_id,state,sent_at,payload,expires_at FROM actions WHERE agent_id=? AND kind IN ('autonomous_post','proactive_private') AND (state IN ('queued','sending') OR (state IN ('accepted','unknown') AND sent_at>=?))",
-                            (self.agent_id,now-after)).fetchall()
+            scope = " AND json_extract(payload,'$.platform')=?" if platform is not None else ""
+            rows=db.execute("SELECT action_id,state,sent_at,payload,expires_at FROM actions WHERE agent_id=? AND kind IN ('autonomous_post','proactive_private') AND (state IN ('queued','sending') OR (state IN ('accepted','unknown') AND sent_at>=?))" + scope,
+                            (self.agent_id,now-after,*((platform,) if platform is not None else ()))).fetchall()
         for row in rows:
             action=json.loads(row["payload"])
             planned=action.get("not_before",0)

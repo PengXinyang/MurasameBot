@@ -179,6 +179,9 @@ web:
 
 
 # Autonomous initiatives; enable in the dashboard after reviewing these limits.
+qq_autonomy:
+  private_enabled: false  # 在管理台QQ页单独开启，其他默认时段/额度由配置装配补齐
+
 autonomy:
   dynamic_enabled: false
   private_enabled: false

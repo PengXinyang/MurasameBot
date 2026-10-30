@@ -18,6 +18,8 @@ def platform_console(config, platform):
             'configured':bool(owner and all(settings[k] for k in ('robot_id','access_token','callback_secret'))),
             'last_check':store.get_setting('qq_connection_check',{})}
         result['batching'] = {k:settings[k] for k in ('quiet_seconds','max_wait_seconds','max_reply_messages')}
+        result['autonomy'] = {'settings':config.data['qq_autonomy'],
+            'status':store.get_setting('autonomy_status:qq:private',{})}
     return result
 
 

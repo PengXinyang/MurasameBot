@@ -5,6 +5,10 @@
 
 实现核对日期：2026-10-30；已完成Q0平台解耦及Q1主人QQ文字/图片私聊代码，Q1使用独立OneBot HTTP适配器、签名事件接收器、持久chat_inbox缓冲，复用MemoryService/VisionService及outbox。QQ网关尚未安装，QQ保持关闭，未实号验收。微信、X发布和视频投稿未接入。早期多级目录图是目标设计，实际结构见[平台模块说明](PLATFORM_MODULES.md)与[QQ私聊](QQ_PRIVATE_CHAT.md)。
 
+## QQ主动私聊装配补充（2026-10-31）
+
+AutonomyService接收装配层的AutonomyTarget表，逐平台使用策略、账号与入站活动回调；仍由一个WorkerCoordinator后台通道生成并通过同一outbox发送。QQ策略在qq_autonomy，B站保留autonomy及原状态键；计划快照/正文去重按平台隔离，QQ ChatBatches活动检查覆盖未合并消息。QQ主动会话使用与入站相同的规范化ID，MemoryService共享私人上下文和受理输出档案。B站专属读取静默/冷却不驱动QQ计划或阻断QQ判断。详见[QQ主动私聊](QQ_AUTONOMY.md)。
+
 ## QQ接入与模块化方向（2026-10-30，Q0已编码）
 
 开发主线转向QQ。采用现有`src/murasamebot`包内的模块化单体，共享角色、身份、记忆、任务、模型预算和outbox；QQ/B站协议实现及装配分别放在`adapters/platforms/qq/`、`adapters/platforms/bilibili/`与`bootstrap/platforms/`，按阶段迁移，不另建复制内核的`src/MurasameQQ`应用，不引入应用微服务。协议桥可独立运行，但不拥有另一套角色决策循环。

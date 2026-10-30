@@ -78,6 +78,10 @@ Cookie 失效时程序暂停相应出站；重新扫码并 `resume`。首版没�
 
 网络默认按 GFWList 分流：B站、QQ、微信及其常用图片/CDN 域名、本机和局域网始终直连；其他请求仅在命中规则且未被例外排除时走本机 7890。规则首次下载通过代理完成，缓存于 `data/gfwlist.txt`，每 6 小时在需要时更新；更新失败保留旧规则。管理台可调整代理范围、刷新间隔和直连域名。可用 `python run.py proxy-rules --refresh` 更新规则，用 `python run.py proxy-rules https://api.bilibili.com https://www.pixiv.net https://api.deepseek.com` 检查路由（不会访问这些目标）。代理服务尚未启动时，在 `config.local.yml` 设置 `network: {proxy_enabled: false}`。代理协议、美图时刻、授权名单与转发开关见 `config.yml`及[操作说明](docs/OPERATIONS.md)。
 
+## QQ主动私聊
+
+在管理台“QQ → 私聊与消息 → 主动来找你聊聊”开启并保存，保持NapCat与QQ平台服务运行。丛雨会根据聊天/共同记忆选择现在发、稍后发或skip；独立时段/安静期/每日额度，计划重启可继续，新输入使旧开场失效。默认关闭，原B站自主设置独立。详见[QQ主动私聊](docs/QQ_AUTONOMY.md)。
+
 ## 管理台与工作循环
 
 管理台已内置`ReceiverManager`：在“运行概况 → 平台服务”分别启动QQ/B站，QQ签名回调随管理台托管，不需要额外`qq-listen`进程。NapCat仍需保持运行。切换前停止原独立worker/接收器；运行状态、自动启动和扩展边界见[平台服务说明](docs/PLATFORM_SERVICES.md)。

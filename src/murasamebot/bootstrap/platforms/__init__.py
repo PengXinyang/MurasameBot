@@ -17,6 +17,9 @@ class PlatformModule:
     poll_seconds: int = 15
     private_policy: dict | None = None
     private_content_provider: object = None
+    autonomy_key: str = "autonomy"
+    autonomy_private_enabled: bool = True
+    autonomy_activity: object = None
 
     @property
     def account_id(self):
@@ -60,6 +63,9 @@ def prepare_platform_state(config, store):
     # Compatibility checkpoint belongs to the Bilibili module, not shared state.
     if "bilibili" in config.enabled_platforms:
         from murasamebot.bootstrap.platforms.bilibili import prepare_state
+        prepare_state(config, store)
+    if "qq" in config.enabled_platforms:
+        from murasamebot.bootstrap.platforms.qq import prepare_state
         prepare_state(config, store)
 
 

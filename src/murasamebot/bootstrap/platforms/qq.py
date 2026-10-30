@@ -31,12 +31,23 @@ class QQModule(PlatformModule):
         ChatBatches(runtime.store).flush(self.adapter.settings, runtime.config.data["owner_person_id"], self.normalize_event, now)
 
 
+def prepare_state(config, store):
+    from murasamebot.domain.models import stable_id
+    stamp = stable_id(config.data["qq_autonomy"])
+    previous = store.get_setting("qq_autonomy_config_stamp")
+    if previous != stamp:
+        if previous is not None:
+            store.cancel_autonomy(platform="qq")
+        store.set_setting("qq_autonomy_config_stamp", stamp)
+
+
 def build_module(config, store):
     from murasamebot.adapters.platforms.qq import QQAdapter, IMAGE_HOSTS
     from murasamebot.adapters.media.http_images import HTTPImageReader
     adapter = QQAdapter(config.data["qq"],store,config.data["owner_person_id"])
-    module = QQModule("qq",adapter,frozenset({"private_reply", "task_result"}),poll_seconds=1,
-        private_policy={"multilingual":True,"topic_filter":False})
+    module = QQModule("qq",adapter,frozenset({"private_reply", "task_result", "proactive_private"}),poll_seconds=1,
+        private_policy={"multilingual":True,"topic_filter":False},autonomy_key="qq_autonomy",
+        autonomy_activity=adapter.pending_private_activity)
     module.private_image_reader = HTTPImageReader(hosts=IMAGE_HOSTS,referer="")
     module.resources = (module.private_image_reader,)
     return module

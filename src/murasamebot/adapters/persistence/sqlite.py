@@ -581,19 +581,21 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
                 return action
         return None
 
-    def autonomy_snapshot(self, kind, now, start, exclude=""):
+    def autonomy_snapshot(self, kind, now, start, exclude="", *, platform=None):
         with self.connection() as db:
+            scope = " AND json_extract(payload,'$.platform')=?" if platform is not None else ""
             row = db.execute("""SELECT COUNT(CASE WHEN created_at>=? THEN 1 END) AS created_today,
                 MAX(created_at) AS last_created,
                 COUNT(CASE WHEN state IN ('accepted','unknown','sending') AND sent_at>=? THEN 1 END) AS sent_today,
                 MAX(CASE WHEN state IN ('accepted','unknown','sending') THEN sent_at END) AS last_sent,
                 COUNT(CASE WHEN state IN ('sending','unknown') OR (state IN ('draft','queued','reviewing') AND expires_at>?) THEN 1 END) AS pending
-                FROM actions WHERE agent_id=? AND kind=? AND action_id!=?""", (start,start,now,self.agent_id,kind,exclude)).fetchone()
+                FROM actions WHERE agent_id=? AND kind=? AND action_id!=?""" + scope, (start,start,now,self.agent_id,kind,exclude,*((platform,) if platform is not None else ()))).fetchone()
             return dict(row)
 
-    def autonomy_text_exists(self, kind, text):
+    def autonomy_text_exists(self, kind, text, *, platform=None):
         with self.connection() as db:
-            return bool(db.execute("SELECT 1 FROM actions WHERE agent_id=? AND kind=? AND json_extract(payload,'$.text')=? AND state NOT IN ('failed','cancelled','expired') LIMIT 1", (self.agent_id,kind,text)).fetchone())
+            scope = " AND json_extract(payload,'$.platform')=?" if platform is not None else ""
+            return bool(db.execute("SELECT 1 FROM actions WHERE agent_id=? AND kind=? AND json_extract(payload,'$.text')=? AND state NOT IN ('failed','cancelled','expired')" + scope + " LIMIT 1", (self.agent_id,kind,text,*((platform,) if platform is not None else ()))).fetchone())
 
     def autonomy_recent_public(self):
         with self.connection() as db:

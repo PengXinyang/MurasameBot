@@ -115,6 +115,8 @@ class Runtime:
                 module.background(self, now)
 
     def run_background(self, now):
+        # Independent chat initiative must not wait for a content-platform read gate.
+        self.engine.autonomy.run(now,platforms=tuple(name for name in self.modules if name!=self.engine.settings.platform))
         # The exploration monitor is specific to the primary content platform.
         if self.network_monitor and not self.network_monitor.allowed("exploration", now):
             return False
@@ -122,7 +124,7 @@ class Runtime:
             self.owner_history.recommend(self.engine, now)
         primary = self.modules.get(self.engine.settings.platform)
         if primary and {"autonomous_post", "proactive_private"} & primary.capabilities:
-            self.engine.autonomy.run(now)
+            self.engine.autonomy.run(now,platforms=(primary.name,))
         if primary and "exploration" in primary.capabilities:
             if not self.engine.run_due_task():
                 self.engine.browse()
@@ -149,7 +151,7 @@ class Runtime:
                 self.owner_history.sync(time.time())
                 self.owner_history.recommend(self.engine,time.time())
             primary = self.modules.get(self.engine.settings.platform)
-            if primary and {"autonomous_post", "proactive_private"} & primary.capabilities:
+            if any({"autonomous_post", "proactive_private"} & m.capabilities for m in self.modules.values()):
                 self.engine.autonomy.run(time.time())
             self.run_artwork(time.time())
             self.engine.dispatch_one()
@@ -251,7 +253,7 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                     return reason
             if action.kind in {"autonomous_post", "proactive_private"}:
                 from murasamebot.application.autonomy import AutonomySettings
-                policy = AutonomySettings.from_config(current.data["autonomy"])
+                policy = AutonomySettings.from_config(current.data[module.autonomy_key])
                 channel = "private" if action.kind == "proactive_private" else "dynamic"
                 if (not policy.enabled(channel) or policy.version() != action.autonomy_version
                         or policy.open_at(now, current.data["timezone"]) != now):
@@ -295,6 +297,13 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
             enabled = reload_config().enabled_platforms
             return tuple((name, module.account_id) for name, module in modules.items() if name in enabled)
         engine.routing = active_routes
+        from murasamebot.application.autonomy import AutonomySettings, AutonomyTarget
+        engine.autonomy.targets = tuple(AutonomyTarget(name,module.account_id,
+            replace(AutonomySettings.from_config(config.data[module.autonomy_key]),
+                dynamic_enabled=config.data[module.autonomy_key]["dynamic_enabled"] and "autonomous_post" in module.capabilities,
+                private_enabled=config.data[module.autonomy_key]["private_enabled"] and "proactive_private" in module.capabilities),
+            module.autonomy_private_enabled,module.autonomy_activity,name if module.autonomy_key!="autonomy" else "")
+            for name,module in modules.items() if {"autonomous_post","proactive_private"} & module.capabilities)
         from murasamebot.application.task_routing import owner_video_route
         engine.request_route = lambda event,person: owner_video_route(store,event,person,provider="bilibili",
             private_platform="qq",public_platform="bilibili",accounts=dict(active_routes())) if event.platform=="qq" else None
