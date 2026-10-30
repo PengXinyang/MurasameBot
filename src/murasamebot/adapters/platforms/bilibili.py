@@ -662,6 +662,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         if action.kind == "like" and action.amount != 0:
             raise PlatformError("点赞不允许携带投币数量")
         headers = None
+        params = None
         if ref.kind == "video":
             fields = {"aid": numeric(ref.external_id), "csrf": self.credentials["bili_jct"]}
             if action.kind == "coin":
@@ -676,7 +677,18 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                     raise PlatformError("无法确认硬币余额，未投币")
                 if balance < 1:
                     return Receipt("failed", detail="硬币余额不足 1 枚，跳过投币")
-                fields.update(multiply=1, select_like=0)
+                # Match the successful web client's page context, not a
+                # captured session or risk token. A coin never implicitly
+                # enables the separately configured like action.
+                fields.update(multiply=1, select_like=0, cross_domain="true", from_spmid="",
+                              spmid="333.788.0.0", statistics='{"appId":100,"platform":5}',
+                              eab_x=2, ramval=0, source="web_normal", ga=1)
+                params = {
+                    "x-bili-locale-json": json.dumps({"c_locale": {"language": "zh", "script": "Hans"},
+                                                     "always_translate": False}, separators=(",", ":")),
+                    "x-bili-device-req-json": json.dumps({"platform": "web", "device": "pc", "spmid": "333.788",
+                                                         "mobi_app": "web_cn"}, separators=(",", ":")),
+                }
                 path = "/x/web-interface/coin/add"
             else:
                 # The combined relation endpoint returns an object rather than a scalar.
@@ -710,7 +722,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             raise PlatformError("不支持此类型的点赞或投币")
         if before_write is not None and not before_write():
             return Receipt("failed", detail="互动前最终检查未通过，未发送")
-        _, receipt = self._write_json(path, data=fields, json_body=body, headers=headers)
+        _, receipt = self._write_json(path, data=fields, json_body=body, headers=headers, params=params)
         return receipt or Receipt("accepted", f"{action.kind}:{target_id}", "平台已受理点赞或单枚投币")
 
     def _image(self, artwork: dict) -> tuple[bytes, str]:
@@ -743,9 +755,12 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             if owned:
                 reader.close()
 
-    def _write_json(self, path: str, *, data=None, json_body=None, files=None, headers=None) -> tuple[dict, Receipt | None]:
+    def _write_json(self, path: str, *, data=None, json_body=None, files=None, headers=None, params=None) -> tuple[dict, Receipt | None]:
         try:
-            response = self.client.post(API + path, params={"csrf": self.credentials["bili_jct"]},
+            # Most legacy endpoints use query CSRF; the web coin endpoint
+            # supplies CSRF in its form and page descriptors in the query.
+            query = {"csrf": self.credentials["bili_jct"]} if params is None else params
+            response = self.client.post(API + path, params=query,
                                         data=data, json=json_body, files=files, headers=headers)
             if response.status_code != 200:
                 return {}, Receipt("unknown", detail=f"写请求 HTTP {response.status_code}，禁止自动重发", pause=response.status_code in {403, 412, 429})

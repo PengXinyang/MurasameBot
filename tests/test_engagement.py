@@ -59,6 +59,49 @@ def test_coin_always_exactly_one_and_no_implicit_like(tmp_path):
     assert "buvid3=server-issued-device" in posts[0].headers["cookie"]
 
 
+def test_coin_matches_web_page_context_using_local_session(tmp_path):
+    adapter, posts = adapter_for(tmp_path)
+    assert adapter.send(reaction(), {}).state == "accepted"
+    request, = posts
+    assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+    # Keep the blank field: absence is not the successful web form's contract.
+    assert parse_qs(request.content.decode(), keep_blank_values=True) == {
+        "aid": ["42"], "multiply": ["1"], "select_like": ["0"],
+        "cross_domain": ["true"], "from_spmid": [""], "spmid": ["333.788.0.0"],
+        "statistics": ['{"appId":100,"platform":5}'], "eab_x": ["2"],
+        "ramval": ["0"], "source": ["web_normal"], "ga": ["1"], "csrf": ["csrf"],
+    }
+    query = dict(request.url.params)
+    assert set(query) == {"x-bili-locale-json", "x-bili-device-req-json"}
+    assert json.loads(query["x-bili-locale-json"]) == {
+        "c_locale": {"language": "zh", "script": "Hans"}, "always_translate": False,
+    }
+    assert json.loads(query["x-bili-device-req-json"]) == {
+        "platform": "web", "device": "pc", "spmid": "333.788", "mobi_app": "web_cn",
+    }
+    # Authentication still comes from this test session, never a saved capture.
+    assert "SESSDATA=test-secret" in request.headers["cookie"]
+    assert "bili_jct=csrf" in request.headers["cookie"]
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_coin_page_context_does_not_change_later_like_requests(tmp_path, dynamic):
+    adapter, posts = adapter_for(tmp_path)
+    assert adapter.send(reaction(), {}).state == "accepted"
+    action = reaction("like", ContentRef("bilibili", "draw", "42"),
+                      context=ContentRef("bilibili", "post", "900")) if dynamic else reaction("like")
+    assert adapter.send(action, {}).state == "accepted"
+    assert len(posts) == 2
+    request = posts[1]
+    assert dict(request.url.params) == {"csrf": "csrf"}
+    if dynamic:
+        assert request.url.path == "/x/dynamic/feed/dyn/thumb"
+        assert json.loads(request.content) == {"dyn_id_str": "900", "up": 1}
+    else:
+        assert request.url.path == "/x/web-interface/archive/like"
+        assert parse_qs(request.content.decode()) == {"aid": ["42"], "csrf": ["csrf"], "like": ["1"]}
+
+
 @pytest.mark.parametrize("coins", [1, 2])
 def test_previously_coined_video_is_not_coined_again(tmp_path, coins):
     adapter, posts = adapter_for(tmp_path, coins=coins)
