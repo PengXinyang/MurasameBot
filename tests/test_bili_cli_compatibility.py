@@ -187,7 +187,8 @@ def test_dashboard_publication_check_persists_readonly_result(factory, tmp_path,
     _, store, platform = accepted_action(factory, now)
     closed = []
     report = PublicationCheck("self_only", "疑似仅自己可见", now + 1, 17, 1)
-    runtime = SimpleNamespace(platform=SimpleNamespace(check_publication=lambda action, rid: report), close=lambda: closed.append(True))
+    probe = SimpleNamespace(check_publication=lambda action, rid: report)
+    runtime = SimpleNamespace(platform=probe, modules={"bilibili": SimpleNamespace(adapter=probe)}, close=lambda: closed.append(True))
     monkeypatch.setattr(web, "prepare_store", lambda cfg: store)
     monkeypatch.setattr(web, "build", lambda cfg: runtime)
     handler = request(write_config(tmp_path), method="POST", url="/api/publication/check", body=b'{"id":"checked"}')

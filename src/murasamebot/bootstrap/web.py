@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.runtime import build, prepare_store, readiness
-from murasamebot.bootstrap.owner_history import OwnerLoginManager, history_status, history_source, history_service
+from murasamebot.bootstrap.owner_history import OwnerLoginManager, history_status, history_source, history_service, optional_history
 from murasamebot.application.request_policy import RequestSettings
 from murasamebot.domain.models import PlatformError
 
@@ -140,12 +140,9 @@ def handler_for(config_path: Path, token: str):
                 elif path == "/api/social":
                     store = prepare_store(config)
                     from murasamebot.application.social import SocialService, SocialSettings
-                    source_reader = history_source(config,store)
-                    try:
+                    with optional_history(config,store) as observations:
                         SocialService(store,SocialSettings(**config.data["social"]),owner_person_id=config.data["owner_person_id"],
-                                      observations=history_service(config,store,source_reader)).context(channel="dynamic",now=time.time())
-                    finally:
-                        source_reader.close()
+                                      observations=observations).context(channel="dynamic",now=time.time())
                     records = []
                     for row in store.social_rows(time.time(),include_inactive=True):
                         source = {k:v for k,v in row["source"].items() if k not in {"activity_anchor","owner_activity_version"}}
@@ -156,12 +153,9 @@ def handler_for(config_path: Path, token: str):
                 elif path == "/api/memory/journals":
                     store=prepare_store(config)
                     feeds={kind:store.memory_feed(kind) for kind in ("memory","diary","reflection")}
-                    source=history_source(config,store)
-                    try:
-                        if not history_service(config,store,source).diary_authorized():
+                    with optional_history(config,store) as observations:
+                        if observations is None or not observations.diary_authorized():
                             feeds["diary"]=[p for p in feeds["diary"] if p["purpose"]!="owner_observation_diary"]
-                    finally:
-                        source.close()
                     self.response(200,feeds)
                 elif path.startswith("/api/data/"):
                     table = path.rsplit("/", 1)[-1]
@@ -221,8 +215,9 @@ def handler_for(config_path: Path, token: str):
                 elif path == "/api/emojis/refresh":
                     runtime = build(config)
                     try:
-                        uid = runtime.platform.account()["uid"]
-                        options = runtime.platform.emoji_options(uid, "public")
+                        platform = runtime.require_platform("bilibili")
+                        uid = platform.account()["uid"]
+                        options = platform.emoji_options(uid, "public")
                         from dataclasses import asdict
                         from murasamebot.domain.models import stable_id
                         key = f"emoji_catalog:bilibili:{uid}:public:{stable_id(runtime.engine.expressions.settings.preferred_keywords)}"
@@ -236,7 +231,8 @@ def handler_for(config_path: Path, token: str):
                     store.audit("platform_paused","管理台手动暂停全部工作",time.time())
                 elif path == "/api/resume":
                     store.set_setting("paused", False)
-                    store.set_setting("platform_paused:bilibili", False)
+                    for platform_name in config.enabled_platforms:
+                        store.set_setting(f"platform_paused:{platform_name}", False)
                     store.audit("platform_resumed","管理台手动恢复工作；接口冷却仍按各自期限执行",time.time())
                 elif path == "/api/approve":
                     store.approve_action(str(data["id"]), time.time())
@@ -258,7 +254,7 @@ def handler_for(config_path: Path, token: str):
                     from murasamebot.application.publication import PublicationService
                     runtime = build(config)
                     try:
-                        result = PublicationService(store, {"bilibili": runtime.platform}).check(str(data["id"]))
+                        result = PublicationService(store, {name: module.adapter for name, module in runtime.modules.items()}).check(str(data["id"]))
                         self.response(200, asdict(result))
                     finally:
                         runtime.close()

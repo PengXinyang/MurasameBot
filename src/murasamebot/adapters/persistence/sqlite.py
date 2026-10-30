@@ -231,11 +231,32 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
                 f"json_array('legacy',json_extract({alias}.payload,'$.platform'),json_extract({alias}.payload,'$.account_id'),"
                 f"json_extract({alias}.payload,'$.conversation_id')))")
 
-    def claim_event(self, now):
+    @staticmethod
+    def _routes_sql(alias, routes):
+        if routes is None:
+            return "1", ()
+        clauses, parameters = [], []
+        for platform, account in routes:
+            clause = f"json_extract({alias}.payload,'$.platform')=?"
+            parameters.append(platform)
+            if account:
+                clause += f" AND json_extract({alias}.payload,'$.account_id')=?"
+                parameters.append(account)
+            clauses.append("(" + clause + ")")
+        return "(" + " OR ".join(clauses) + ")" if clauses else "0", tuple(parameters)
+
+    @staticmethod
+    def _matches_routes(item, routes):
+        return routes is None or any(item.platform == platform and (not account or item.account_id == account)
+                                     for platform, account in routes)
+
+    def claim_event(self, now, *, routes=None):
         with self.transaction() as db:
             db.execute("UPDATE events SET state='pending' WHERE agent_id=? AND state='processing' AND lease_until<?", (self.agent_id, now))
             ordering_key = self._event_ordering_key
-            row = db.execute(f"SELECT * FROM events WHERE agent_id=? AND state='pending' AND next_at<=? AND NOT EXISTS (SELECT 1 FROM events earlier WHERE earlier.agent_id=events.agent_id AND earlier.event_id!=events.event_id AND {ordering_key('earlier')}={ordering_key('events')} AND (earlier.state='processing' OR (earlier.state='pending' AND earlier.rowid<events.rowid))) AND NOT EXISTS (SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') ORDER BY CASE WHEN json_extract(payload,'$.kind') IN ('mention','post_mention','reply','private_message','chat') THEN 0 ELSE 1 END,rowid LIMIT 1", (self.agent_id, now)).fetchone()
+            route_sql, route_args = self._routes_sql("events", routes)
+            earlier_sql, earlier_args = self._routes_sql("earlier", routes)
+            row = db.execute(f"SELECT * FROM events WHERE agent_id=? AND state='pending' AND next_at<=? AND {route_sql} AND NOT EXISTS (SELECT 1 FROM events earlier WHERE earlier.agent_id=events.agent_id AND earlier.event_id!=events.event_id AND {earlier_sql} AND {ordering_key('earlier')}={ordering_key('events')} AND (earlier.state='processing' OR (earlier.state='pending' AND earlier.rowid<events.rowid))) AND NOT EXISTS (SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') ORDER BY CASE WHEN json_extract(payload,'$.kind') IN ('mention','post_mention','reply','private_message','chat') THEN 0 ELSE 1 END,rowid LIMIT 1", (self.agent_id, now, *route_args, *earlier_args)).fetchone()
             if not row:
                 return None
             db.execute("UPDATE events SET state='processing',attempts=attempts+1,lease_until=? WHERE agent_id=? AND event_id=?", (now + 900, self.agent_id, row["event_id"]))
@@ -441,7 +462,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
         with self.connection() as db:
             return self._validate_action(db, action, now)
 
-    def claim_action(self, now, daily_limit, daily_recommendations, day_start, min_gap, recommendation_gap, allow_proactive=True, manual_only=False, require_review=False, required_review_method="", autonomous_kinds=()):
+    def claim_action(self, now, daily_limit, daily_recommendations, day_start, min_gap, recommendation_gap, allow_proactive=True, manual_only=False, require_review=False, required_review_method="", autonomous_kinds=(), routes=None):
         with self.transaction() as db:
             # A crashed write may have reached the platform. Never requeue it.
             stale = db.execute("SELECT action_id,payload FROM actions WHERE agent_id=? AND state='sending' AND lease_until<?", (self.agent_id, now)).fetchall()
@@ -463,6 +484,8 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             rows = db.execute(f"SELECT rowid AS queue_order,payload,kind,{self._action_ordering_key('actions')} AS ordering_key FROM actions WHERE agent_id=? AND state='queued' ORDER BY CASE kind WHEN 'reply' THEN 0 WHEN 'private_reply' THEN 0 WHEN 'recommendation' THEN 1 ELSE 2 END,created_at", (self.agent_id,)).fetchall()
             for row in rows:
                 action = Action.from_dict(json.loads(row["payload"]))
+                if not self._matches_routes(action, routes):
+                    continue
                 if max(action.not_before,action.retry_at) > now:
                     continue
                 if action.kind in {"autonomous_post", "proactive_private"} and action.kind not in autonomous_kinds:
@@ -474,7 +497,8 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
                     continue
                 if require_review and not action.approved_manually and action.kind not in {"like", "coin"} and (action.review_state != "passed" or required_review_method=="independent" and action.review_method=="inline"):
                     continue
-                if action.conversation_id and db.execute(f"SELECT 1 FROM actions earlier WHERE agent_id=? AND rowid<? AND state IN ('queued','reviewing') AND {self._action_ordering_key('earlier')}=?", (self.agent_id, row["queue_order"], row["ordering_key"])).fetchone():
+                earlier_sql, earlier_args = self._routes_sql("earlier", routes)
+                if action.conversation_id and db.execute(f"SELECT 1 FROM actions earlier WHERE agent_id=? AND rowid<? AND state IN ('queued','reviewing') AND {self._action_ordering_key('earlier')}=? AND {earlier_sql}", (self.agent_id, row["queue_order"], row["ordering_key"], *earlier_args)).fetchone():
                     continue
                 if not allow_proactive and action.kind not in {"autonomous_post", "proactive_private"} and (action.proactive or action.kind in {"recommendation", "browse_comment", "browse_reply"}):
                     continue
@@ -526,9 +550,10 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             sent = db.execute("SELECT MAX(sent_at) FROM actions WHERE agent_id=? AND state='accepted' AND json_extract(payload,'$.visibility')='private' AND json_extract(payload,'$.conversation_id')=?", (self.agent_id,conversation)).fetchone()[0]
             return {"last_at": max(row["last_at"] or 0, sent or 0), "pending": row["pending"]}
 
-    def cancel_autonomy(self):
+    def cancel_autonomy(self, *, platform=None):
         with self.transaction() as db:
-            db.execute("UPDATE actions SET state='cancelled',receipt=? WHERE agent_id=? AND kind IN ('autonomous_post','proactive_private') AND state IN ('draft','queued','reviewing')", (dumps({"detail":"自主发布配置已变化，旧计划已取消"}),self.agent_id))
+            scope = " AND json_extract(payload,'$.platform')=?" if platform is not None else ""
+            db.execute("UPDATE actions SET state='cancelled',receipt=? WHERE agent_id=? AND kind IN ('autonomous_post','proactive_private') AND state IN ('draft','queued','reviewing')" + scope, (dumps({"detail":"自主发布配置已变化，旧计划已取消"}),self.agent_id, *((platform,) if platform is not None else ())))
 
     def finish_action(self, action_id, receipt, now):
         if receipt.state not in ("accepted", "failed", "unknown"):
@@ -555,7 +580,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
                     else:
                         db.execute("UPDATE tasks SET state=?,reason=? WHERE agent_id=? AND task_id=?", (state, receipt.detail[:500], self.agent_id, action.task_id))
 
-    def claim_review_action(self, now, *, strategy="independent"):
+    def claim_review_action(self, now, *, strategy="independent", routes=None):
         with self.transaction() as db:
             # These leases cover model-only work; recovery cannot duplicate a social write.
             stale = db.execute("SELECT action_id FROM actions WHERE agent_id=? AND state='reviewing' AND lease_until<?", (self.agent_id, now)).fetchall()
@@ -564,6 +589,8 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             rows = db.execute("SELECT payload FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND (COALESCE(json_extract(payload,'$.review_state'),'')!='passed' OR (?='independent' AND json_extract(payload,'$.review_method')='inline')) ORDER BY created_at", (self.agent_id,strategy)).fetchall()
             for row in rows:
                 action = Action.from_dict(json.loads(row[0]))
+                if not self._matches_routes(action, routes):
+                    continue
                 if self._validate_action(db, action, now):
                     continue
                 paused = db.execute("SELECT value FROM settings WHERE agent_id=? AND key=?", (self.agent_id, f"platform_paused:{action.platform}")).fetchone()
@@ -752,16 +779,18 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
                 if task_id:
                     db.execute("UPDATE tasks SET state='delivery_unknown' WHERE agent_id=? AND task_id=? AND state!='cancelled'", (self.agent_id,task_id))
 
-    def queue_status(self, *, review_strategy="independent", now=None):
+    def queue_status(self, *, review_strategy="independent", now=None, routes=None):
         now = time.time() if now is None else now
+        action_sql, action_args = self._routes_sql("actions", routes)
+        event_sql, event_args = self._routes_sql("events", routes)
         with self.connection() as db:
             events = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM events WHERE agent_id=? GROUP BY state", (self.agent_id,))}
             actions = {row[0]: row[1] for row in db.execute("SELECT state,COUNT(*) FROM actions WHERE agent_id=? GROUP BY state", (self.agent_id,))}
-            ready_actions = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND COALESCE(json_extract(payload,'$.not_before'),0)<=? AND COALESCE(json_extract(payload,'$.retry_at'),0)<=?", (self.agent_id,now,now)).fetchone()[0]
-            reviews = db.execute("SELECT COUNT(*) FROM actions WHERE agent_id=? AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND (COALESCE(json_extract(payload,'$.review_state'),'')!='passed' OR (?='independent' AND json_extract(payload,'$.review_method')='inline'))", (self.agent_id,review_strategy)).fetchone()[0]
+            ready_actions = db.execute(f"SELECT COUNT(*) FROM actions WHERE agent_id=? AND {action_sql} AND state='queued' AND COALESCE(json_extract(payload,'$.not_before'),0)<=? AND COALESCE(json_extract(payload,'$.retry_at'),0)<=?", (self.agent_id, *action_args, now, now)).fetchone()[0]
+            reviews = db.execute(f"SELECT COUNT(*) FROM actions WHERE agent_id=? AND {action_sql} AND state='queued' AND kind NOT IN ('like','coin') AND COALESCE(json_extract(payload,'$.approved_manually'),0)=0 AND (COALESCE(json_extract(payload,'$.review_state'),'')!='passed' OR (?='independent' AND json_extract(payload,'$.review_method')='inline'))", (self.agent_id, *action_args, review_strategy)).fetchone()[0]
             pending = db.execute(f"SELECT state,next_at,{self._event_ordering_key('events')} AS ordering_key,"
                                  "EXISTS(SELECT 1 FROM settings s WHERE s.agent_id=events.agent_id AND s.key='platform_paused:'||json_extract(events.payload,'$.platform') AND s.value='true') AS paused "
-                                 "FROM events WHERE agent_id=? AND state IN ('pending','processing') ORDER BY rowid", (self.agent_id,)).fetchall()
+                                 f"FROM events WHERE agent_id=? AND {event_sql} AND state IN ('pending','processing') ORDER BY rowid", (self.agent_id, *event_args)).fetchall()
         occupied = {r['ordering_key'] for r in pending if r['state']=='processing'}
         ready, retry, blocked, paused, next_retry = 0, 0, 0, 0, None
         for row in pending:
@@ -779,6 +808,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
                 ready += 1
             occupied.add(key)
         return {"pending_events": events.get("pending", 0), "processing_events": events.get("processing", 0),
+                "inactive_events": events.get("pending", 0) - sum(r["state"] == "pending" for r in pending),
                 "ready_events": ready, "retry_wait_events": retry, "blocked_events": blocked, "paused_events": paused,
                 "failed_events": events.get("failed",0), "next_retry_at": next_retry,
                 "reviewing_actions": actions.get("reviewing", 0), "queued_actions": actions.get("queued", 0), "ready_actions": ready_actions, "draft_actions": actions.get("draft", 0), "review_ready_actions": reviews}

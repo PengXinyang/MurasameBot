@@ -25,6 +25,8 @@ def adapter_for(tmp_path, *, balance=5, coins=0, liked=False, timeout=False):
             data = {"multiply": coins}
         elif path.endswith("/relation"):
             data = {"like": liked}
+        elif path.endswith("/finger/spi"):
+            data = {"b_3": "server-issued-device", "b_4": "server-issued-device-four"}
         elif path.endswith("/detail"):
             data = {"item": {"id_str": "900", "type": "DYNAMIC_TYPE_DRAW",
                             "basic": {"comment_id_str": "42", "comment_type": 11},
@@ -52,6 +54,9 @@ def test_coin_always_exactly_one_and_no_implicit_like(tmp_path):
     assert len(posts) == 1 and posts[0].url.path == "/x/web-interface/coin/add"
     fields = parse_qs(posts[0].content.decode())
     assert fields["multiply"] == ["1"] and fields["select_like"] == ["0"]
+    assert posts[0].headers["origin"] == "https://www.bilibili.com"
+    assert posts[0].headers["referer"] == "https://www.bilibili.com/video/av42/"
+    assert "buvid3=server-issued-device" in posts[0].headers["cookie"]
 
 
 @pytest.mark.parametrize("coins", [1, 2])

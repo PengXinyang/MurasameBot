@@ -100,6 +100,9 @@ def test_failed_vision_never_becomes_visual_evidence_and_has_retry_backoff(facto
     vision = VisionService(VisionSettings(), reader(), model, store, model_name="vision")
     doc = vision.enrich(replace(document(), text=""), now)
     assert doc.evidence_level == "metadata" and doc.visual.status == "failed" and not doc.visual.indices
+    detail = next(r["detail"] for r in store.inspect("audit") if r["kind"] == "vision_result")
+    assert "图片下载1/1张" in detail and "有效识别0/1张" in detail
+    assert "模型调用或JSON解析" in detail
     vision.enrich(replace(document(), text=""), now + 1, previous=doc)
     assert len(model.calls) == 1
     vision.enrich(replace(document(), text=""), now + 601, previous=doc)

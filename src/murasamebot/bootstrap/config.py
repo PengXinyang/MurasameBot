@@ -55,7 +55,7 @@ class Config:
         if not isinstance(raw, dict):
             raise ValueError("配置必须为 YAML 对象")
         from murasamebot.adapters.network import DIRECT_DOMAINS, GFWLIST_URL
-        raw = merge({"social":asdict(SocialSettings()),"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
+        raw = merge({"platforms":{"bilibili":{"enabled":True}},"social":asdict(SocialSettings()),"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
                      "bilibili":{"private_poll_seconds":30},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "limits":{"event_retry_seconds":60},
@@ -84,6 +84,14 @@ class Config:
 
     @staticmethod
     def validate(data: dict):
+        platforms = data.get("platforms", {"bilibili": {"enabled": True}})
+        if not isinstance(platforms, dict):
+            raise ValueError("platforms 必须为平台配置对象")
+        for name, options in platforms.items():
+            if (not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", name)
+                    or not isinstance(options, dict) or set(options) != {"enabled"}
+                    or type(options["enabled"]) is not bool):
+                raise ValueError("平台设置需要合法名称与 enabled 布尔开关")
         social = data.get("social", {})
         if not isinstance(social,dict) or set(social)-set(SocialSettings.__dataclass_fields__):
             raise ValueError("未知的社交状态设置")
@@ -233,7 +241,7 @@ class Config:
                 raise ValueError("额度和间隔需要为合理的正整数")
         if browse.get("videos_per_round", 0) > 10 or browse.get("candidate_limit", 0) > 30:
             raise ValueError("每轮分析最多 10 个视频，候选最多 30 个")
-        if type(data.get("bilibili", {}).get("poll_seconds")) is not int or data["bilibili"]["poll_seconds"] < 30:
+        if platforms.get("bilibili", {}).get("enabled", False) and (type(data.get("bilibili", {}).get("poll_seconds")) is not int or data["bilibili"]["poll_seconds"] < 30):
             raise ValueError("主人作品轮询间隔至少为 30 秒")
         reply_interval = data.get("bilibili", {}).get("reply_poll_seconds", 15)
         concurrency = data.get("processing", {}).get("model_concurrency", 4)
@@ -364,11 +372,21 @@ class Config:
     def file(self, key: str) -> Path:
         return (self.root / self.data[key]).resolve()
 
+    @property
+    def enabled_platforms(self) -> tuple[str, ...]:
+        return tuple(name for name, options in self.data["platforms"].items() if options["enabled"])
+
+    @property
+    def primary_platform(self) -> str:
+        # Keep legacy Bilibili discovery/autonomy routing when enabled.
+        return "bilibili" if "bilibili" in self.enabled_platforms else next(iter(self.enabled_platforms), "")
+
     def behaviour(self, account_id: str = "") -> Behaviour:
         browse, limits = self.data["browsing"], self.data["limits"]
         values = {key: limits[key] for key in limits if key in {f.name for f in fields(Behaviour)}}
         return Behaviour(social=SocialSettings(**self.data["social"]),autonomy=AutonomySettings.from_config(self.data["autonomy"]), agent_id=self.data["agent_id"], owner_person_id=self.data["owner_person_id"],
-                         private_messages_enabled=self.data["bilibili"].get("private_messages_enabled",True),
+                         platform=self.primary_platform,
+                         private_messages_enabled=bool(self.primary_platform) and self.data.get(self.primary_platform, {}).get("private_messages_enabled",True),
                          account_id=account_id, timezone=self.data["timezone"], draft=self.data["mode"] == "draft",
                          model_review=self.data["mode"] == "reviewed",
                          review_strategy=self.data.get("review",{}).get("strategy","inline"),
@@ -414,7 +432,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if set(patch.get("network", {})) - {"proxy_enabled", "proxy_url", "proxy_mode", "gfwlist_refresh_hours", "direct_domains"}:

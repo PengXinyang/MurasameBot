@@ -1,4 +1,7 @@
 agent_id: murasame
+platforms:
+  bilibili:
+    enabled: true  # legacy default; disabled modules create no protocol clients
 owner_history:
   enabled: false  # enabled after owner QR login; never reuse AI credentials
   poll_seconds: 300

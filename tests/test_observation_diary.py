@@ -173,8 +173,8 @@ def test_journal_feeds_are_separate_and_authenticated(tmp_path,monkeypatch,now):
     obs.sync(now);watched.append(record(now+1));obs.sync(now+2,force=True)
     assert s.observation_diary_commit(obs.diary_context(now+2,now+3,20),"基于授权观察的小小感想。",0,now+2,7)
     authorized=[False]
-    monkeypatch.setattr(web,"history_source",lambda *a:SimpleNamespace(close=lambda:None))
-    monkeypatch.setattr(web,"history_service",lambda *a:SimpleNamespace(diary_authorized=lambda:authorized[0]))
+    from contextlib import nullcontext
+    monkeypatch.setattr(web,"optional_history",lambda *a:nullcontext(SimpleNamespace(diary_authorized=lambda:authorized[0])))
     server=ThreadingHTTPServer(("127.0.0.1",0),handler_for(path,"token"))
     thread=Thread(target=server.serve_forever,daemon=True);thread.start()
     try:

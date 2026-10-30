@@ -9,6 +9,7 @@ from html import unescape
 import json
 from pathlib import Path
 import re
+from tempfile import NamedTemporaryFile
 import time
 from urllib.parse import quote, urlencode, urlparse
 
@@ -601,6 +602,54 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         return Receipt("accepted", rpid, "平台已受理，公开可见性尚未独立验证", mention_resolved,
                        publication_check=classify_comment(reply))
 
+    def _ensure_reaction_device(self):
+        # A QR session can contain valid account auth without a web device
+        # cookie. Obtain one from the platform, never synthesize fingerprints
+        # or rotate an existing device after a rejected write.
+        if self.credentials.get("buvid3"):
+            return
+        valid = lambda value: isinstance(value, str) and 0 < len(value) <= 512 and re.fullmatch(r"[A-Za-z0-9._=+/-]+", value)
+        # Each sender job owns a new adapter. Keep a separate, session-bound
+        # device cache so it does not request a different device every send,
+        # and never rewrite or race the account's QR-login credential file.
+        cache_path = self.credentials_path.with_suffix(".device.json")
+        signature = stable_id(*(self.credentials.get(key, "") for key in ("SESSDATA", "bili_jct", "DedeUserID")))
+        values = {}
+        if cache_path.exists():
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                if not isinstance(cached, dict):
+                    raise ValueError()
+                if cached.get("session_signature") == signature:
+                    values = {key: cached.get(key) for key in ("buvid3", "buvid4")}
+                    if not valid(values["buvid3"]):
+                        raise ValueError()
+            except (ValueError, OSError):
+                raise PlatformError("网页设备缓存无效，未轮换设备或发送互动；请检查本地凭证或重新登录", code="device_cookie_missing", pause=True) from None
+        if not values:
+            device, _ = self._request("/x/frontend/finger/spi")
+            values = {key: device.get(field) for key, field in (("buvid3", "b_3"), ("buvid4", "b_4"))}
+        if not valid(values["buvid3"]):
+            raise PlatformError("未取得B站签发的网页设备凭证buvid3，已停止点赞/投币；请检查登录与平台验证", code="device_cookie_missing", pause=True)
+        device_values = {key: value for key, value in values.items() if valid(value)}
+        temporary = None
+        try:
+            with NamedTemporaryFile(mode="w", encoding="utf-8", dir=cache_path.parent,
+                                    prefix=cache_path.name + ".", suffix=".tmp", delete=False) as handle:
+                temporary = Path(handle.name)
+                temporary.chmod(0o600)
+                json.dump({"session_signature": signature, **device_values}, handle)
+            temporary.replace(cache_path)
+        except OSError:
+            raise PlatformError("无法保存独立网页设备缓存，未发送互动；请检查凭证目录权限", code="device_cookie_missing", pause=True) from None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        for key, value in values.items():
+            if valid(value) and not self.credentials.get(key):
+                self.credentials[key] = value
+        self._sync_cookies()
+
     def _send_reaction(self, action: Action, *, before_write=None) -> Receipt:
         ref = action.content
         if not ref or ref.provider != "bilibili" or action.mentions or action.recipient_id:
@@ -609,6 +658,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             raise PlatformError("只允许给视频投 1 枚硬币")
         if action.kind == "like" and action.amount != 0:
             raise PlatformError("点赞不允许携带投币数量")
+        headers = None
         if ref.kind == "video":
             fields = {"aid": numeric(ref.external_id), "csrf": self.credentials["bili_jct"]}
             if action.kind == "coin":
@@ -632,6 +682,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                     return Receipt("accepted", f"like:{fields['aid']}", "视频已经点赞，未重复写入")
                 fields["like"] = 1
                 path = "/x/web-interface/archive/like"
+            self._ensure_reaction_device()
+            headers = {"Origin": "https://www.bilibili.com",
+                       "Referer": f"https://www.bilibili.com/video/av{fields['aid']}/"}
             body = None
             target_id = fields["aid"]
         elif action.kind == "like" and ref.kind in {"dynamic", "draw", "post"}:
@@ -654,7 +707,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             raise PlatformError("不支持此类型的点赞或投币")
         if before_write is not None and not before_write():
             return Receipt("failed", detail="互动前最终检查未通过，未发送")
-        _, receipt = self._write_json(path, data=fields, json_body=body)
+        _, receipt = self._write_json(path, data=fields, json_body=body, headers=headers)
         return receipt or Receipt("accepted", f"{action.kind}:{target_id}", "平台已受理点赞或单枚投币")
 
     def _image(self, artwork: dict) -> tuple[bytes, str]:
@@ -687,10 +740,10 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             if owned:
                 reader.close()
 
-    def _write_json(self, path: str, *, data=None, json_body=None, files=None) -> tuple[dict, Receipt | None]:
+    def _write_json(self, path: str, *, data=None, json_body=None, files=None, headers=None) -> tuple[dict, Receipt | None]:
         try:
             response = self.client.post(API + path, params={"csrf": self.credentials["bili_jct"]},
-                                        data=data, json=json_body, files=files)
+                                        data=data, json=json_body, files=files, headers=headers)
             if response.status_code != 200:
                 return {}, Receipt("unknown", detail=f"写请求 HTTP {response.status_code}，禁止自动重发", pause=response.status_code in {403, 412, 429})
             payload = response.json()
@@ -702,7 +755,12 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             return {}, Receipt("unknown", detail="写请求缺少平台状态码，禁止自动重发")
         if payload.get("code") != 0:
             code = payload.get("code")
-            raise PlatformError(f"平台操作未受理，接口错误 {code}", code=str(code), pause=code in {-101, -111, -403, -412, -509, -352, -401, 12015})
+            reasons = {-401: "请求未通过认证或平台校验，不是硬币不足；请检查登录、设备凭证及平台验证",
+                       -104: "硬币余额不足", -101: "账号未登录或登录已过期",
+                       -111: "CSRF校验失败，请重新登录", -352: "平台风控校验未通过",
+                       34004: "投币间隔过短，请稍后再试", 34005: "该视频投币已达上限"}
+            reason = "：" + reasons[code] if code in reasons else ""
+            raise PlatformError(f"平台操作未受理，接口错误 {code}{reason}", code=str(code), pause=code in {-101, -111, -403, -412, -509, -352, -401, 12015})
         return payload.get("data") or {}, None
 
     def _send_dynamic(self, action: Action, *, before_write=None) -> Receipt:

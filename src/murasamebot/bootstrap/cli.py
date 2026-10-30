@@ -12,7 +12,6 @@ import httpx
 
 from murasamebot.adapters.characters.lingchat import load_persona
 from murasamebot.adapters.demo import run_demo
-from murasamebot.adapters.platforms.bilibili import REGIONS
 from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.runtime import build, prepare_store, readiness
 from murasamebot.domain.models import Event, PlatformError
@@ -43,7 +42,7 @@ def worker_loop(config_path: Path, stop: StopEvent, *, once=False):
                 started = time.monotonic()
                 runtime = build(config)
                 try:
-                    if not runtime.model.configured or not runtime.platform.configured:
+                    if not runtime.model.configured or not any(module.adapter.configured for module in runtime.modules.values()):
                         raise ValueError("请先填写本地模型配置并运行 login 完成扫码；可先运行 doctor 或 demo")
                     if runtime.store.acquire_lease("worker_tick", time.time(), 1200):
                         try:
@@ -54,7 +53,7 @@ def worker_loop(config_path: Path, stop: StopEvent, *, once=False):
                             runtime.store.release_lease("worker_tick")
                 finally:
                     runtime.close()
-                next_poll = max(time.monotonic() + 1, started + config.data["bilibili"].get("reply_poll_seconds", 15))
+                next_poll = max(time.monotonic() + 1, started + min((getattr(module, "poll_seconds", 15) for module in runtime.modules.values()), default=15))
                 coordinator.start_background()
             coordinator.pump(config)
             stop.wait(1)
@@ -140,6 +139,7 @@ def main(argv=None):
             show(config.public())
             return
         if args.command == "categories":
+            from murasamebot.adapters.platforms.bilibili import REGIONS
             show({"catalog": REGIONS, "note": "社区接口兼容分区参考表；实际可用性需真实接口验收，网站导航可能不同。"})
             return
         if args.command == "serve":
@@ -154,7 +154,8 @@ def main(argv=None):
             paused = args.command == "pause"
             store.set_setting("paused", paused)
             if not paused:
-                store.set_setting("platform_paused:bilibili", False)
+                for platform in config.enabled_platforms:
+                    store.set_setting(f"platform_paused:{platform}", False)
             store.audit("platform_resumed" if not paused else "platform_paused","命令行人工操作",time.time())
             show({"paused": paused})
             return
@@ -187,20 +188,23 @@ def main(argv=None):
             if args.command == "doctor":
                 report = readiness(runtime)
                 if args.online:
-                    report["account_check"] = runtime.platform.account()
+                    checks = {name: module.adapter.account() for name, module in runtime.modules.items()}
+                    # Keep the original Bilibili-only doctor response shape.
+                    report["account_check"] = checks["bilibili"] if set(checks) == {"bilibili"} else checks
                     report["note"] = "仅验证只读登录状态，未发布评论或验收其他接口"
                 show(report)
             elif args.command == "comment-check":
                 from dataclasses import asdict
                 from murasamebot.application.publication import PublicationService
-                show(asdict(PublicationService(runtime.store, {"bilibili": runtime.platform}).check(args.id)))
+                show(asdict(PublicationService(runtime.store, {name: module.adapter for name, module in runtime.modules.items()}).check(args.id)))
             elif args.command == "ingest":
                 data = json.loads(args.file.read_text(encoding="utf-8"))
                 added = runtime.engine.ingest(Event.from_dict(data))
                 processed = runtime.engine.process_one_event() if args.process else False
                 show({"added": added, "processed_one_event": processed, "sent": False})
             elif args.command == "login":
-                login = runtime.platform.generate_login()
+                platform = runtime.require_platform("bilibili")
+                login = platform.generate_login()
                 path = config.root / ".secrets" / "login-qr.png"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -212,13 +216,13 @@ def main(argv=None):
                 deadline = time.monotonic() + 180
                 previous = None
                 while time.monotonic() < deadline:
-                    state = runtime.platform.poll_login(login["key"])
+                    state = platform.poll_login(login["key"])
                     if state != previous:
                         print({"waiting": "等待扫码", "scanned": "请在手机确认", "expired": "二维码过期", "success": "登录成功", "error": "扫码失败"}[state])
                         previous = state
                     if state in {"success", "expired", "error"}:
                         if state == "success":
-                            show(runtime.platform.account())
+                            show(platform.account())
                         break
                     time.sleep(2)
         finally:

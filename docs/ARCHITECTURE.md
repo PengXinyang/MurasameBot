@@ -1,6 +1,14 @@
 # 当前架构
 
-核对日期：2026-10-29。说明当前工作树中的实现；QQ、微信、X发布和视频投稿不是现有集成。早期设计中按业务拆成多级子目录的树形图是目标设计，以下目录以代码为准。
+实现核对日期：2026-10-30；原B站功能快照为2026-10-29，本轮实现Q0平台解耦。QQ、微信、X发布和视频投稿不是现有集成。早期多级目录图是目标设计，实际结构以本页及[平台模块说明](PLATFORM_MODULES.md)为准。
+
+## QQ接入与模块化方向（2026-10-30，Q0已编码）
+
+开发主线转向QQ。采用现有`src/murasamebot`包内的模块化单体，共享角色、身份、记忆、任务、模型预算和outbox；QQ/B站协议实现及装配分别放在`adapters/platforms/qq/`、`adapters/platforms/bilibili/`与`bootstrap/platforms/`，按阶段迁移，不另建复制内核的`src/MurasameQQ`应用，不引入应用微服务。协议桥可独立运行，但不拥有另一套角色决策循环。
+
+当前已新增`bootstrap/platforms/__init__.py`与`bilibili.py`，独立B站构造、轮询及专属策略；Runtime按启用工厂装配共享内核和端口表，按平台/账号过滤事件、审核及发送领取。禁用B站不创建其客户端、观察与插画来源；假QQ-only模块已用于隔离测试。`Runtime.platform`与旧构造方式保留兼容，真实QQ未接入。内容来源/结果渠道任务拆分仍待Q2，主内容平台配置和部分B站默认值/校验继续保留。
+
+为保护B站实现，本轮不移动`adapters/platforms/bilibili*.py`，也不改其协议代码。功能与完整目标目录见[QQ方案](QQ_INTEGRATION.md)，当前实现见[平台模块说明](PLATFORM_MODULES.md)，决策见D30/D31。下文原有B站业务流程继续有效。
 
 ## 技术栈与运行方式
 
@@ -33,6 +41,7 @@ src/murasamebot/
                 artwork/、media/、network.py、proxy_rules.py
                 request_monitor.py；demo.py仅离线模拟
   bootstrap/    config.py装配配置；runtime.py装配实现和最终策略
+                platforms/惰性工厂、B站装配/轮询/专属策略
                 workers.py协调工作；cli.py、web.py
                 dashboard.html/css、owner-history.js、request-controls.js
 character/      settings.yml原来源；text_profile.yml文字人设；界面素材
@@ -87,6 +96,8 @@ flowchart TD
 ### 请求控制
 
 `RequestMonitor`/`MonitoredTransport`包装B站API客户端，AI与主人角色共享GET时间槽，角色/通道冷却隔离。日志仅端点元数据。`-509`/HTTP429读取失败使用退避，尚未写出的动作通过`retry_at`等候，不改原`not_before`和有效期；认证/验证码/写入风险仍有平台暂停。计划前静默停止后台采集，私信最后定向预检可越过静默但不能越过实际冷却。
+
+视频点赞/投币在最终门禁前补查缺失的真实网页设备字段，使用凭证同目录的独立`.device.json`缓存，按登录会话摘要跨发送任务复用，不覆写扫码文件；请求携带对应视频来源。模型适配器通过`structured_json.py`严格解析对象，只有视觉描述允许有限尾逗号/原始控制字符规范化；重复键与非有限常量拒绝。视觉服务分开记录图片下载与有效识别，失败不形成视觉证据，详见D32和排障专题。
 
 ### 记忆与数据状态
 

@@ -25,6 +25,8 @@ class WorkerCoordinator:
         runtime = self.build(config, concurrency=self.model_limit)
         try:
             if kind == "observation":
+                if not runtime.owner_history:
+                    return False
                 history_monitor=getattr(runtime.owner_history.source,"monitor",None)
                 if history_monitor and not history_monitor.allowed("owner_history"):
                     return False
@@ -40,18 +42,7 @@ class WorkerCoordinator:
             if not runtime.store.acquire_lease("background_decision", time.time(), 1200):
                 return False
             try:
-                if getattr(runtime,"network_monitor",None) and not runtime.network_monitor.allowed("exploration"):
-                    return False
-                if getattr(runtime,"owner_history",None):
-                    runtime.owner_history.recommend(runtime.engine,time.time())
-                runtime.engine.autonomy.run(time.time())
-                if not runtime.engine.run_due_task():
-                    runtime.engine.browse()
-                if runtime.artwork:
-                    runtime.artwork.run(time.time(), agent_id=runtime.engine.settings.agent_id, platform="bilibili",
-                                        account_id=runtime.platform.account_id, timezone=config.data["timezone"],
-                                        draft=runtime.engine.settings.draft, ttl_minutes=runtime.engine.settings.action_ttl_minutes,
-                                        review_strategy=runtime.engine.settings.review_strategy if runtime.engine.settings.model_review else "none")
+                runtime.run_background(time.time())
             finally:
                 runtime.store.release_lease("background_decision")
             return False
@@ -80,11 +71,12 @@ class WorkerCoordinator:
             self.collect(self.observer)
             self.observer = None
         observation = store.owner_history_state(config.data["owner_person_id"])
-        if (self.observer is None and config.data["owner_history"]["enabled"] and
+        if (self.observer is None and "bilibili" in config.enabled_platforms and config.data["owner_history"]["enabled"] and
                 time.time()-observation.get("last_attempt",0)>=config.data["owner_history"]["poll_seconds"]):
             self.observer = self.pool.submit(self.job,"observation")
         store.recover_idle_work(time.time())
-        state = store.queue_status(review_strategy=config.data.get("review",{}).get("strategy","inline"))
+        state = store.queue_status(review_strategy=config.data.get("review",{}).get("strategy","inline"),
+                                   routes=tuple((name, "") for name in config.enabled_platforms))
         ready = state.get("ready_events",state["pending_events"])
         jobs = ready + (state["review_ready_actions"] if config.data["mode"] == "reviewed" else 0)
         if jobs:

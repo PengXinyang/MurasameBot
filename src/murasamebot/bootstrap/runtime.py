@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
-import json
 import logging
 import time
 
 from murasamebot.adapters.characters.lingchat import load_persona
-from murasamebot.adapters.artwork.sources import PixivSource, XSource
 from murasamebot.adapters.models.chat_completions import ChatCompletionsModel
 from murasamebot.adapters.network import rules_for
 from murasamebot.adapters.media.http_images import HTTPImageReader
 from murasamebot.adapters.persistence.sqlite import SQLiteStore
-from murasamebot.adapters.platforms.bilibili import BilibiliAdapter
 from murasamebot.application.engine import SocialEngine
 from murasamebot.application.artwork import ArtDiscovery, ArtSettings
 from murasamebot.application.vision import VisionService, VisionSettings
@@ -20,10 +16,9 @@ from murasamebot.application.expressions import ExpressionService, ExpressionSet
 from murasamebot.application.memory import MemoryService, MemorySettings
 from murasamebot.application.review import review_satisfied
 from murasamebot.bootstrap.config import Config
-from murasamebot.bootstrap.owner_history import history_source, history_service
+from murasamebot.bootstrap.platforms import build_modules, close_resources, module_resources, prepare_platform_state
 from murasamebot.domain.models import Action, PlatformError, stable_id
 from murasamebot.domain.topics import blocked, document_topic, local_topic
-from murasamebot.adapters.request_monitor import RequestMonitor
 from murasamebot.application.request_policy import RequestSettings
 
 
@@ -32,13 +27,7 @@ LOG = logging.getLogger("murasame")
 
 def prepare_store(config: Config) -> SQLiteStore:
     store = SQLiteStore(config.file("database"), config.data["agent_id"])
-    store.owner_history_prune(config.data["owner_person_id"],time.time(),config.data["owner_history"]["retention_days"])
-    autonomy_stamp = stable_id(config.data["autonomy"], config.data["bilibili"].get("private_messages_enabled",True))
-    previous = store.get_setting("autonomy_config_stamp")
-    if previous != autonomy_stamp:
-        if previous is not None:
-            store.cancel_autonomy()
-        store.set_setting("autonomy_config_stamp", autonomy_stamp)
+    prepare_platform_state(config, store)
     if config.data["mode"] == "draft":
         store.enable_review_mode()
     stamp = stable_id(config.data.get("bindings", []))
@@ -66,7 +55,7 @@ def prepare_store(config: Config) -> SQLiteStore:
 class Runtime:
     config: Config
     store: SQLiteStore
-    platform: BilibiliAdapter
+    platform: object | None
     model: ChatCompletionsModel
     engine: SocialEngine
     artwork: ArtDiscovery | None = None
@@ -74,83 +63,71 @@ class Runtime:
     owner_history: object = None
     network_monitor: object = None
 
-    def record_inbox_warnings(self, channel: str, now: float):
-        warnings = getattr(self.platform, "take_warnings", lambda: [])()
-        current = self.store.get_setting("inbox_warnings", {})
-        previous = current.get(channel, [])
-        if warnings != previous:
-            for warning in warnings:
-                self.store.audit("inbox_warning", warning["detail"], now)
-                LOG.warning("收件警告：%s", warning["detail"])
-        current[channel] = warnings
-        self.store.set_setting("inbox_warnings", current)
+    modules: dict | None = None
 
-    def _poll_notifications(self, now):
-        try:
-            events = self.platform.notifications(now)
-            self.record_inbox_warnings("notifications", now)
-            self.engine.settings = replace(self.engine.settings, account_id=self.platform.account_id)
-            key = f"notifications_initialized:{self.platform.account_id}"
-            initialized = self.store.get_setting(key, False)
-            added = 0
-            for event in events:
-                added += self.engine.ingest(event, baseline=not initialized)
-            self.store.set_setting(key, True)
-            if added or not initialized:
-                LOG.info("评论/@通知：%s %d 条", "建立历史基线" if not initialized else "发现新事件", added)
-        except PlatformError as exc:
-            self.store.audit("notification_error", str(exc), now)
-            if exc.pause:
-                self.engine.pause_platform(exc, "bilibili")
-            LOG.warning("通知读取未完成：%s", exc)
+    def __post_init__(self):
+        # Preserve Runtime(config, store, bili_adapter, model, engine) for callers.
+        if self.modules is None:
+            self.modules = {}
+            if self.platform is not None:
+                from murasamebot.bootstrap.platforms.bilibili import BilibiliModule, CAPABILITIES
+                self.modules["bilibili"] = BilibiliModule("bilibili", self.platform, CAPABILITIES,
+                    history=self.owner_history, artwork=self.artwork, monitor=self.network_monitor)
 
-    def poll(self, now: float | None = None):
+    def require_platform(self, name):
+        module = self.modules.get(name)
+        if module is None:
+            raise ValueError("平台尚未启用或接入：" + name)
+        return module.adapter
+
+    def poll(self, now=None):
         now = time.time() if now is None else now
-        if self.engine.paused("bilibili"):
-            return
-        if self.network_monitor is None or (self.network_monitor.allowed("notifications",now) and
-                self.store.claim_poll_interval("notifications",now,self.config.data["bilibili"]["reply_poll_seconds"])):
-            self._poll_notifications(now)
-        if self.network_monitor and not self.network_monitor.allowed("owner_feed",now):
-            return
-        if self.engine.paused("bilibili"):
-            return
-        owner = self.store.binding(self.config.data["owner_person_id"], "bilibili")
-        if not owner:
-            return
-        if owner["external_id"] == self.platform.account_id:
-            self.store.set_setting("platform_paused:bilibili", True)
-            self.store.audit("wrong_account", "主人账号与 AI 账号相同，已暂停以防止对自身内容循环转发", now)
-            return
-        poll_key = f"owner_poll_at:{self.platform.account_id}:{owner['external_id']}"
-        if now - self.store.get_setting(poll_key, 0) < self.config.data["bilibili"].get("poll_seconds", 0):
-            return
-        self.store.set_setting(poll_key, now)
-        try:
-            events = self.platform.owner_content(owner["external_id"], now)
-            key = f"owner_initialized:{self.platform.account_id}:{owner['external_id']}"
-            initialized = self.store.get_setting(key, False)
-            since_key = key + ":since"
-            since = self.store.get_setting(since_key, now - 2)
-            for event in events:
-                is_video = event.content.kind == "video"
-                old = not initialized or event.occurred_at < since
-                controls = self.config.data["bilibili"]
-                enabled = controls["owner_new_videos" if is_video else "owner_new_dynamics"]
-                self.engine.ingest(event, baseline=old or not enabled or event.kind == "owner_share_only")
-                if event.share_content:
-                    repost = replace(event, event_id=event.event_id + ":repost", kind="owner_repost",
-                                     content=event.share_content, share_content=event.content)
-                    repost_enabled = controls.get("repost_owner_videos" if is_video else "repost_owner_dynamics", False)
-                    self.engine.ingest(repost, baseline=old or not repost_enabled)
-            if not initialized:
-                self.store.set_setting(since_key, now - 2)
-            self.store.set_setting(key, True)
-        except PlatformError as exc:
-            self.store.audit("owner_poll_error", str(exc), now)
-            if exc.pause:
-                self.engine.pause_platform(exc, "bilibili")
-            LOG.warning("主人内容监测未完成：%s", exc)
+        for module in self.modules.values():
+            if getattr(module.adapter, "configured", True) and not self.engine.paused(module.name):
+                try:
+                    module.poll(self, now)
+                except PlatformError as exc:
+                    self.engine.pause_platform(exc, module.name)
+                    self.store.audit("platform_poll_error", module.name + ": " + exc.code, now)
+
+    def poll_private(self, now=None):
+        now = time.time() if now is None else now
+        for module in self.modules.values():
+            if getattr(module.adapter, "configured", True) and not self.engine.paused(module.name):
+                try:
+                    module.poll_private(self, now)
+                except PlatformError as exc:
+                    self.engine.pause_platform(exc, module.name)
+                    self.store.audit("platform_poll_error", module.name + ": " + exc.code, now)
+
+    def ingest(self, event, *, baseline=False):
+        if not event.event_id or not event.actor_id or not event.conversation_id or not event.account_id:
+            raise ValueError("事件缺少稳定身份或会话标识")
+        module = self.modules.get(event.platform)
+        if module is None or (module.account_id and module.account_id != event.account_id):
+            raise ValueError("事件平台或机器人账号与启用模块不匹配")
+        return self.engine.ingest(module.normalize_event(event), baseline=baseline)
+
+    def run_artwork(self, now):
+        for module in self.modules.values():
+            if not self.engine.paused(module.name):
+                module.background(self, now)
+
+    def run_background(self, now):
+        # The exploration monitor is specific to the primary content platform.
+        if self.network_monitor and not self.network_monitor.allowed("exploration", now):
+            return False
+        if self.owner_history:
+            self.owner_history.recommend(self.engine, now)
+        primary = self.modules.get(self.engine.settings.platform)
+        if primary and {"autonomous_post", "proactive_private"} & primary.capabilities:
+            self.engine.autonomy.run(now)
+        if primary and "exploration" in primary.capabilities:
+            if self.engine.settings.platform in self.engine.providers:
+                if not self.engine.run_due_task():
+                    self.engine.browse()
+        self.run_artwork(now)
+        return False
 
     def tick(self):
         now = time.time()
@@ -164,190 +141,162 @@ class Runtime:
                 self.engine.dispatch_one()
                 if not processed:
                     break
-            if not self.engine.run_due_task():
-                self.engine.browse()
+            primary = self.modules.get(self.engine.settings.platform)
+            if primary and "exploration" in primary.capabilities:
+                if not self.engine.run_due_task():
+                    self.engine.browse()
             if self.owner_history:
                 self.owner_history.sync(time.time())
                 self.owner_history.recommend(self.engine,time.time())
-            self.engine.autonomy.run(time.time())
-            if self.artwork:
-                self.artwork.run(time.time(), agent_id=self.engine.settings.agent_id, platform="bilibili",
-                                 account_id=self.platform.account_id, timezone=self.engine.settings.timezone,
-                                 draft=self.engine.settings.draft, ttl_minutes=self.engine.settings.action_ttl_minutes,
-                                 review_strategy=self.engine.settings.review_strategy if self.engine.settings.model_review else "none")
+            primary = self.modules.get(self.engine.settings.platform)
+            if primary and {"autonomous_post", "proactive_private"} & primary.capabilities:
+                self.engine.autonomy.run(time.time())
+            self.run_artwork(time.time())
             self.engine.dispatch_one()
             self.engine.memory_service.maintain()
             self.store.set_setting("last_tick", time.time())
         finally:
             self.store.release_lease("worker_tick")
 
-    def poll_private(self, now: float | None = None):
-        now = time.time() if now is None else now
-        if self.engine.paused("bilibili") or not self.config.data["bilibili"].get("private_messages_enabled", True):
-            return
-        if self.network_monitor:
-            if not self.network_monitor.allowed("private_inbox",now):
-                return
-            if not self.store.claim_poll_interval("private_inbox",now,self.config.data["bilibili"]["private_poll_seconds"]):
-                return
-        try:
-            uid = self.platform.account_id or self.platform.account()["uid"]
-            key = f"private_inbox:{uid}"
-            checkpoint = self.store.get_setting(key)
-            baseline = checkpoint is None
-            since = checkpoint["since"] if checkpoint else now
-            cursors = dict(checkpoint.get("cursors", {})) if checkpoint else {}
-            batch = self.platform.private_messages(now, since=since, cursors=cursors, baseline=baseline)
-            self.record_inbox_warnings("private", now)
-            self.engine.settings = replace(self.engine.settings, account_id=self.platform.account_id)
-            # Persist events before advancing cursors. A crash between the two
-            # re-reads duplicates, which enqueue_event safely rejects.
-            for event in batch.events:
-                self.engine.ingest(event, baseline=baseline)
-            cursors.update(batch.cursors)
-            self.store.set_setting(key, {"since": since, "cursors": cursors})
-            if baseline:
-                self.store.audit("private_initialized", "私信历史基线已建立，此后仅处理互关用户的新文字消息", now)
-                LOG.info("私信历史基线已建立，仅处理此后的互关新消息")
-            if batch.events or batch.denied_peers:
-                self.store.audit("private_polled", f"读取新私信 {len(batch.events)} 条；非互关会话略过 {batch.denied_peers} 个", now)
-                LOG.info("私信：新消息 %d 条；非互关会话略过 %d 个", len(batch.events), batch.denied_peers)
-        except PlatformError as exc:
-            self.engine.pause_platform(exc, "bilibili")
-            self.store.audit("private_poll_error", str(exc), now)
-            LOG.warning("私信读取未完成：%s", exc)
-
     def close(self):
-        self.platform.close()
-        self.model.close()
-        if self.artwork:
-            for source in self.artwork.sources.values():
-                source.close()
-        for resource in self.resources:
-            resource.close()
+        resources = [self.model, *self.resources]
+        for module in self.modules.values():
+            resources.extend(module_resources(module))
+        close_resources(resources)
 
 
-def build(config: Config, *, concurrency=None) -> Runtime:
+def build(config: Config, *, concurrency=None, platform_factories=None) -> Runtime:
     store = prepare_store(config)
-    monitor=RequestMonitor(store,RequestSettings(**config.data["requests"]))
-    history_reader = history_source(config,store)
-    history = history_service(config,store,history_reader)
-    b = config.data["bilibili"]
-    v = config.data.get("vision", {})
-    platform = BilibiliAdapter((config.root / b["credentials"]).resolve(), expected_uid=str(b.get("robot_uid", "")),
-                               pages=b["notification_pages"], max_age_hours=b["notification_max_age_hours"], proxy_url=config.network_proxy,
-                               private_session_pages=b.get("private_session_pages", 3), private_message_pages=b.get("private_message_pages", 3),
-                               private_max_age_hours=b.get("private_message_max_age_hours", 24),
-                               read_video_subtitles=b.get("read_video_subtitles", True), inbox_batch_limit=b.get("inbox_batch_limit", 90),
-                               proactive_recipient_id=(store.binding(config.data["owner_person_id"], "bilibili") or {}).get("external_id", ""), monitor=monitor,
-                               video_frames_enabled=v.get("enabled", True) and v.get("video_frames_enabled", True),
-                               video_frame_count=min(v.get("video_frame_count", 6), v.get("max_images", 9)),
-                               video_frame_max_parts=v.get("video_frame_max_parts", 3),
-                               frame_cache_minutes=v.get("cache_minutes", 1440), frame_retry_minutes=v.get("failure_retry_minutes", 10))
-    m = config.data["model"]
-    model = ChatCompletionsModel(base_url=m["base_url"], name=m["name"], api_key=m["api_key"], store=store,
-                                 timezone=config.data["timezone"], daily_limit=m["daily_call_limit"],
-                                 timeout=m["timeout_seconds"], max_context=m["max_context_characters"], proxy_url=config.network_proxy,
-                                 max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency)
-    persona = load_persona(config.file("character_source"), config.file("character_profile"))
-    if persona.source_changed:
-        LOG.warning("源人设已变化：请复核 character/text_profile.yml，现有记忆与任务保留")
-    v = config.data.get("vision", {})
-    vision_settings = VisionSettings(**{key: v[key] for key in VisionSettings.__dataclass_fields__ if key in v})
-    reader = HTTPImageReader(hosts=tuple(v.get("allowed_image_hosts", ["i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com", "bimp.hdslb.com"])), proxy_url=config.network_proxy)
-    resources = [reader, history_reader]
-    vision_model = model
-    if v.get("base_url") or v.get("name") or v.get("api_key"):
-        base = v.get("base_url") or m["base_url"]
-        # Never forward the text provider's key to a different vision service.
-        key = v.get("api_key") or (m["api_key"] if base.rstrip("/") == m["base_url"].rstrip("/") else "")
-        vision_model = ChatCompletionsModel(base_url=base, name=v.get("name") or m["name"], api_key=key, store=store,
-                                           timezone=config.data["timezone"], daily_limit=m["daily_call_limit"], timeout=m["timeout_seconds"],
-                                           max_context=m["max_context_characters"], proxy_url=config.network_proxy, max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency)
-        resources.append(vision_model)
-    vision = VisionService(vision_settings, reader, vision_model, store, model_name=v.get("name") or m["name"])
-    e = config.data.get("expressions", {})
-    expressions = ExpressionService(ExpressionSettings(enabled=e.get("enabled", True), max_per_message=e.get("max_per_message", 2),
-                    cache_minutes=e.get("cache_minutes", 360), preferred_keywords=tuple(e.get("preferred_keywords", ["千恋万花", "丛雨"])),
-                    kaomoji_enabled=e.get("kaomoji_enabled",True)), {"bilibili": platform}, store)
-    def action_policy(action: Action, now: float) -> str:
-        current = Config(config.path)
-        if action.social_refs:
-            from murasamebot.application.social import SocialService, SocialSettings
-            reason = SocialService(store,SocialSettings(**current.data["social"]),owner_person_id=current.data["owner_person_id"],
-                                   observations=history_service(current,store,history_reader)).guard(action,now)
-            if reason:
-                return reason
-        if action.visibility == "public" and action.content:
-            event = store.event(action.event_id) if action.event_id else None
-            document = store.cached_document(action.content,now)
-            binding = store.binding(current.data["owner_person_id"],action.platform)
-            owner = bool(binding and ((event and event.actor_id == binding["external_id"])
-                or (not action.reply_to and document and document.author_id == binding["external_id"])
-                or (action.reply_to and document and any(c.get("id")==action.reply_to and c.get("author_id")==binding["external_id"] for c in document.comments))))
-            if (blocked(action.topic_class,owner) or blocked(document_topic(document,event.text if event else ""),owner)
-                    or local_topic(action.text)=="sensitive"):
-                return "公开话题限制：敏感、非主人严肃话题或未完成分类；人工批准也不放行"
-        if action.owner_activity_version:
-            reason = history_service(current,store,history_reader).guard(action,now)
-            if reason:
-                return reason
-        if action.kind in {"autonomous_post", "proactive_private"}:
-            from murasamebot.application.autonomy import AutonomySettings
-            policy = AutonomySettings.from_config(current.data["autonomy"])
-            channel = "private" if action.kind == "proactive_private" else "dynamic"
-            if (not policy.enabled(channel) or policy.version() != action.autonomy_version
-                    or policy.open_at(now, current.data["timezone"]) != now):
-                return "自主发布设置已变化或不在允许时段"
-        if (current.data["mode"]=="reviewed" and current.data["review"]["strategy"]!=config.data["review"]["strategy"]
-                and not action.approved_manually and action.kind not in {"like","coin"}
-                and not review_satisfied(action,current.data["review"]["strategy"])):
-            return "审核策略已经变化，需要按当前策略重新审核"
-        if action.kind in {"browse_comment", "browse_reply", "recommendation"}:
-            key = {"browse_comment": "comment_videos", "browse_reply": "reply_comments", "recommendation": "recommend_owner"}[action.kind]
-            if not current.data["browsing"].get(key, True):
-                return "对应主动评论、接话或推荐功能已关闭"
-        if action.emojis and (not current.data.get("expressions", {}).get("enabled", True) or len(action.emojis) > current.data.get("expressions", {}).get("max_per_message", 2)):
-            return "表情设置已变化，请重新生成或取消此草稿"
-        if any(e.kind=="kaomoji" for e in action.emojis) and not current.data.get("expressions",{}).get("kaomoji_enabled",True):
-            return "颜文字已关闭，请重新生成或取消此草稿"
-        if action.kind in {"like", "coin"}:
-            key = "video_coin" if action.kind == "coin" else "video_like" if action.content and action.content.kind == "video" else "dynamic_like"
-            if not current.data.get("engagement", {}).get(key, False):
-                return "对应点赞或投币功能已关闭"
-            if action.proactive and not current.data["browsing"]["enabled"]:
-                return "自主浏览已关闭"
-        if action.kind in {"private_reply", "proactive_private"} and not current.data["bilibili"].get("private_messages_enabled", True):
-            return "私信回复功能已关闭"
-        if action.kind == "artwork_share":
-            art = ArtSettings.from_config(current.data.get("artwork", {}))
-            if not art.enabled or art.delivery != action.artwork.get("delivery"):
-                return "美图分享已关闭或投递方式已改变"
-            if action.artwork.get("delivery") == "image":
-                grant = art.permission(action.artwork, now)
-                if not grant or stable_id(grant) != action.artwork.get("permission_id"):
-                    return "作品转载授权已经撤销、到期或变化"
-        if action.kind == "owner_repost":
-            key = "repost_owner_videos" if action.source_kind == "video" else "repost_owner_dynamics"
-            if not current.data["bilibili"].get(key, False):
-                return "主人转发功能已关闭"
-        return ""
-    engine = SocialEngine(config.behaviour(platform.account_id), store, model, persona,
-                           {"bilibili": platform}, {"bilibili": platform}, action_policy=action_policy,
-                           private_access={"bilibili": platform}, vision=vision, expressions=expressions, owner_activity=history,
-                           memory=MemoryService(store,model,MemorySettings(**config.data.get("memory",{})),timezone=config.data["timezone"],
-                                                observations=history,persona=persona.prompt(True,private=True),
-                                                observation_guard=lambda context,now: history_service(Config(config.path),store,history_reader).diary_valid(context,now)))
-    a = config.data.get("artwork", {})
-    sources = {}
-    for source in a.get("sources", []):
-        sources[source] = PixivSource(a.get("pixiv_session", ""), proxy_url=config.network_proxy) if source == "pixiv" else XSource(a.get("x_bearer_token", ""), proxy_url=config.network_proxy)
-    artwork = ArtDiscovery(ArtSettings.from_config(a), sources, store, model, persona)
-    return Runtime(config, store, platform, model, engine, artwork, tuple(resources), history, monitor)
+    modules = build_modules(config, store, platform_factories)
+    model, resources = None, []
+    try:
+        primary = modules.get(config.primary_platform)
+        platform = primary.adapter if primary else None
+        history = primary.history if primary else None
+        monitor = primary.monitor if primary else None
+        def current_history(current):
+            if primary is None or primary.history is None:
+                return None
+            return primary.current_history(current, store)
+        m = config.data["model"]
+        model = ChatCompletionsModel(base_url=m["base_url"], name=m["name"], api_key=m["api_key"], store=store,
+                                     timezone=config.data["timezone"], daily_limit=m["daily_call_limit"],
+                                     timeout=m["timeout_seconds"], max_context=m["max_context_characters"], proxy_url=config.network_proxy,
+                                     max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency)
+        persona = load_persona(config.file("character_source"), config.file("character_profile"))
+        if persona.source_changed:
+            LOG.warning("源人设已变化：请复核 character/text_profile.yml，现有记忆与任务保留")
+        v = config.data.get("vision", {})
+        vision_settings = VisionSettings(**{key: v[key] for key in VisionSettings.__dataclass_fields__ if key in v})
+        reader = HTTPImageReader(hosts=tuple(v.get("allowed_image_hosts", ["i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com", "bimp.hdslb.com"])), proxy_url=config.network_proxy)
+        # Keep the legacy resources view while closing shared references only once.
+        resources = [reader, *[m.history_reader for m in modules.values() if m.history_reader is not None]]
+        vision_model = model
+        if v.get("base_url") or v.get("name") or v.get("api_key"):
+            base = v.get("base_url") or m["base_url"]
+            # Never forward the text provider's key to a different vision service.
+            key = v.get("api_key") or (m["api_key"] if base.rstrip("/") == m["base_url"].rstrip("/") else "")
+            vision_model = ChatCompletionsModel(base_url=base, name=v.get("name") or m["name"], api_key=key, store=store,
+                                               timezone=config.data["timezone"], daily_limit=m["daily_call_limit"], timeout=m["timeout_seconds"],
+                                               max_context=m["max_context_characters"], proxy_url=config.network_proxy, max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency)
+            resources.append(vision_model)
+        vision = VisionService(vision_settings, reader, vision_model, store, model_name=v.get("name") or m["name"])
+        e = config.data.get("expressions", {})
+        expressions = ExpressionService(ExpressionSettings(enabled=e.get("enabled", True), max_per_message=e.get("max_per_message", 2),
+                        cache_minutes=e.get("cache_minutes", 360), preferred_keywords=tuple(e.get("preferred_keywords", ["千恋万花", "丛雨"])),
+                        kaomoji_enabled=e.get("kaomoji_enabled",True)), {name: module.adapter for name, module in modules.items() if "emoji" in module.capabilities}, store)
+        def action_policy(action: Action, now: float) -> str:
+            current = Config(config.path)
+            module = modules.get(action.platform)
+            if module is None or action.platform not in current.enabled_platforms:
+                return "目标平台未启用或尚未接入"
+            if module.account_id and action.account_id != module.account_id:
+                return "目标机器人账号已变化"
+            if action.kind not in module.capabilities:
+                return "目标平台不支持该动作"
+            platform_reason = module.guard(current, action, now)
+            if platform_reason:
+                return platform_reason
+            if action.social_refs:
+                from murasamebot.application.social import SocialService, SocialSettings
+                reason = SocialService(store,SocialSettings(**current.data["social"]),owner_person_id=current.data["owner_person_id"],
+                                       observations=current_history(current)).guard(action,now)
+                if reason:
+                    return reason
+            if action.visibility == "public" and action.content:
+                event = store.event(action.event_id) if action.event_id else None
+                document = store.cached_document(action.content,now)
+                binding = store.binding(current.data["owner_person_id"],action.platform)
+                owner = bool(binding and ((event and event.actor_id == binding["external_id"])
+                    or (not action.reply_to and document and document.author_id == binding["external_id"])
+                    or (action.reply_to and document and any(c.get("id")==action.reply_to and c.get("author_id")==binding["external_id"] for c in document.comments))))
+                if (blocked(action.topic_class,owner) or blocked(document_topic(document,event.text if event else ""),owner)
+                        or local_topic(action.text)=="sensitive"):
+                    return "公开话题限制：敏感、非主人严肃话题或未完成分类；人工批准也不放行"
+            if action.owner_activity_version:
+                active_history = current_history(current)
+                reason = active_history.guard(action,now) if active_history else "主人观察服务不可用"
+                if reason:
+                    return reason
+            if action.kind in {"autonomous_post", "proactive_private"}:
+                from murasamebot.application.autonomy import AutonomySettings
+                policy = AutonomySettings.from_config(current.data["autonomy"])
+                channel = "private" if action.kind == "proactive_private" else "dynamic"
+                if (not policy.enabled(channel) or policy.version() != action.autonomy_version
+                        or policy.open_at(now, current.data["timezone"]) != now):
+                    return "自主发布设置已变化或不在允许时段"
+            if (current.data["mode"]=="reviewed" and current.data["review"]["strategy"]!=config.data["review"]["strategy"]
+                    and not action.approved_manually and action.kind not in {"like","coin"}
+                    and not review_satisfied(action,current.data["review"]["strategy"])):
+                return "审核策略已经变化，需要按当前策略重新审核"
+            if action.emojis and (not current.data.get("expressions", {}).get("enabled", True) or len(action.emojis) > current.data.get("expressions", {}).get("max_per_message", 2)):
+                return "表情设置已变化，请重新生成或取消此草稿"
+            if any(e.kind=="kaomoji" for e in action.emojis) and not current.data.get("expressions",{}).get("kaomoji_enabled",True):
+                return "颜文字已关闭，请重新生成或取消此草稿"
+            if action.kind == "artwork_share":
+                art = ArtSettings.from_config(current.data.get("artwork", {}))
+                if not art.enabled or art.delivery != action.artwork.get("delivery"):
+                    return "美图分享已关闭或投递方式已改变"
+                if action.artwork.get("delivery") == "image":
+                    grant = art.permission(action.artwork, now)
+                    if not grant or stable_id(grant) != action.artwork.get("permission_id"):
+                        return "作品转载授权已经撤销、到期或变化"
+            return ""
+        behaviour = config.behaviour(primary.account_id if primary else "")
+        capabilities = primary.capabilities if primary else frozenset()
+        behaviour = replace(behaviour,
+            browsing_enabled=behaviour.browsing_enabled and "exploration" in capabilities,
+            private_messages_enabled=behaviour.private_messages_enabled and "private_reply" in capabilities,
+            autonomy=replace(behaviour.autonomy,
+                dynamic_enabled=behaviour.autonomy.dynamic_enabled and "autonomous_post" in capabilities,
+                private_enabled=behaviour.autonomy.private_enabled and "proactive_private" in capabilities))
+        engine = SocialEngine(behaviour, store, model, persona,
+                               {name: module.adapter for name, module in modules.items() if "content" in module.capabilities},
+                               {name: module.adapter for name, module in modules.items()}, action_policy=action_policy,
+                               private_access={name: module.adapter for name, module in modules.items() if "private_reply" in module.capabilities}, vision=vision, expressions=expressions, owner_activity=history,
+                               memory=MemoryService(store,model,MemorySettings(**config.data.get("memory",{})),timezone=config.data["timezone"],
+                                                    observations=history,persona=persona.prompt(True,private=True),
+                                                    observation_guard=lambda context,now: bool((h := current_history(Config(config.path))) and h.diary_valid(context,now))))
+        def active_routes():
+            enabled = Config(config.path).enabled_platforms
+            return tuple((name, module.account_id) for name, module in modules.items() if name in enabled)
+        engine.routing = active_routes
+        for module in modules.values():
+            if module.artwork:
+                module.artwork.model, module.artwork.persona = model, persona
+        artwork = primary.artwork if primary else None
+        return Runtime(config, store, platform, model, engine, artwork, tuple(resources), history, monitor, modules)
+    except BaseException:
+        close_resources([model, *resources, *[r for module in modules.values() for r in module_resources(module)]])
+        raise
+
 
 
 def readiness(runtime: Runtime) -> dict:
+    statuses = {name: module.status(runtime) for name, module in runtime.modules.items()}
+    primary = statuses.get(runtime.engine.settings.platform, {})
     return {
+        "platforms": statuses, "primary_platform": runtime.engine.settings.platform,
         "requests": runtime.store.request_status(time.time(),RequestSettings(**runtime.config.data["requests"])),
         "memory": {**runtime.store.memory_status(),"health":runtime.store.get_setting("memory_health",{}),
                    "last_contexts":[row for row in runtime.store.memory_contexts()]},
@@ -357,24 +306,25 @@ def readiness(runtime: Runtime) -> dict:
         "source_changed": runtime.engine.persona.source_changed,
         "text_language": "中文", "mode": runtime.config.data["mode"],
         "model_configured": runtime.model.configured,
-        "login_configured": runtime.platform.configured,
-        "owner_uid": (runtime.store.binding(runtime.config.data["owner_person_id"], "bilibili") or {}).get("external_id"),
-        "browsing_enabled": runtime.config.data["browsing"]["enabled"],
-        "paused": runtime.engine.paused("bilibili"), "last_tick": runtime.store.get_setting("last_tick"),
+        "login_configured": bool(statuses) and all(s["configured"] for s in statuses.values()),
+        "owner_uid": (runtime.store.binding(runtime.config.data["owner_person_id"], runtime.engine.settings.platform) or {}).get("external_id"),
+        "browsing_enabled": runtime.engine.settings.browsing_enabled,
+        "paused": runtime.engine.paused(runtime.engine.settings.platform), "last_tick": runtime.store.get_setting("last_tick"),
         "live_verified": False,
         "proxy_enabled": bool(runtime.config.proxy_url),
         "proxy_mode": runtime.config.data["network"]["proxy_mode"],
         "proxy_rules": rules_for(runtime.config.network_proxy).status(),
-        "artwork_enabled": runtime.config.data.get("artwork", {}).get("enabled", False),
-        "private_messages_enabled": runtime.config.data["bilibili"].get("private_messages_enabled", True),
-        "private_reply_policy": "mutual_follow_only",
-        "reply_poll_seconds": runtime.config.data["bilibili"].get("reply_poll_seconds", 15),
-        "owner_poll_seconds": runtime.config.data["bilibili"]["poll_seconds"],
+        "artwork_enabled": bool(runtime.artwork and runtime.artwork.settings.enabled),
+        "private_messages_enabled": primary.get("private_messages_enabled", False),
+        "private_reply_policy": primary.get("private_reply_policy", "unavailable"),
+        "reply_poll_seconds": primary.get("reply_poll_seconds", 15),
+        "owner_poll_seconds": primary.get("owner_poll_seconds", 0),
         "vision_enabled": runtime.config.data.get("vision", {}).get("enabled", True),
-        "video_analysis": "title_description" if not runtime.config.data["bilibili"].get("read_video_subtitles", True) else "title_description_available_subtitles",
+        "video_analysis": primary.get("video_analysis", "unavailable"),
         "model_concurrency": runtime.config.data.get("processing", {}).get("model_concurrency", 4),
-        "inbox_batch_limit": runtime.config.data["bilibili"].get("inbox_batch_limit", 90),
+        "inbox_batch_limit": primary.get("inbox_batch_limit", 0),
         "warnings": [w for warnings in runtime.store.get_setting("inbox_warnings", {}).values() for w in warnings],
         "review_strategy": runtime.config.data["review"]["strategy"],
-        "queues": runtime.store.queue_status(review_strategy=runtime.config.data["review"]["strategy"]),
+        "queues": runtime.store.queue_status(review_strategy=runtime.config.data["review"]["strategy"],
+            **({"routes": runtime.engine.routing()} if runtime.engine.routing else {})),
     }

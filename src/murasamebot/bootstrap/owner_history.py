@@ -1,9 +1,9 @@
 """Admin-only owner QR sessions; never reuse the AI account adapter."""
 from io import BytesIO
+from contextlib import contextmanager
 from threading import RLock
 import time
 
-from murasamebot.adapters.platforms.bilibili_history import BilibiliOwnerHistory
 from murasamebot.application.owner_history import OwnerHistoryService, OwnerHistorySettings
 from murasamebot.domain.models import PlatformError
 from murasamebot.adapters.request_monitor import RequestMonitor
@@ -11,6 +11,9 @@ from murasamebot.application.request_policy import RequestSettings
 
 
 def history_source(config, store=None):
+    if "bilibili" not in config.enabled_platforms:
+        raise ValueError("B站模块未启用，主人观察不可用")
+    from murasamebot.adapters.platforms.bilibili_history import BilibiliOwnerHistory
     path = config.root / ".secrets" / "bilibili-owner.json"
     if path.resolve() == (config.root/config.data["bilibili"]["credentials"]).resolve():
         raise ValueError("主人观察凭证不能与 AI 发布凭证共用")
@@ -19,7 +22,24 @@ def history_source(config, store=None):
 
 
 def history_service(config, store, source):
-    return OwnerHistoryService(store,source,OwnerHistorySettings(**config.data["owner_history"]),config.data["owner_person_id"],"bilibili")
+    from dataclasses import replace
+    settings = OwnerHistorySettings(**config.data["owner_history"])
+    if "bilibili" not in config.enabled_platforms:
+        settings = replace(settings, enabled=False)
+    return OwnerHistoryService(store,source,settings,config.data["owner_person_id"],"bilibili")
+
+
+@contextmanager
+def optional_history(config, store):
+    """Shared dashboard pages must work without the Bilibili module."""
+    if "bilibili" not in config.enabled_platforms:
+        yield None
+        return
+    source = history_source(config, store)
+    try:
+        yield history_service(config, store, source)
+    finally:
+        source.close()
 
 
 class OwnerLoginManager:
@@ -63,6 +83,9 @@ class OwnerLoginManager:
 
     def poll(self, config, store):
         with self.lock:
+            if "bilibili" not in config.enabled_platforms:
+                self.cancel()
+                return {"state":"platform_disabled"}
             if not self.pending or self.pending["expires"] < time.time():
                 self.cancel()
                 return {"state":"expired"}
@@ -95,6 +118,8 @@ class OwnerLoginManager:
 
 
 def history_status(config,store):
+    if "bilibili" not in config.enabled_platforms:
+        return {"enabled":False,"login_saved":False,"uid":"","state":"platform_disabled","records":[]}
     person = config.data["owner_person_id"]
     state = store.owner_history_state(person)
     binding = store.binding(person,"bilibili")

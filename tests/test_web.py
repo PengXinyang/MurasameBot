@@ -90,7 +90,8 @@ def test_dashboard_can_refresh_readonly_emoji_catalog(tmp_path,monkeypatch):
     token=Emoji("bilibili:102084","[千恋万花表情包_丛雨Ciallo]","丛雨Ciallo")
     calls=[]
     platform=SimpleNamespace(account=lambda:{"uid":"999"},emoji_options=lambda uid,channel:calls.append((uid,channel)) or (token,))
-    runtime=SimpleNamespace(platform=platform,engine=SimpleNamespace(expressions=SimpleNamespace(settings=ExpressionSettings())),close=lambda:None)
+    runtime=SimpleNamespace(platform=platform,require_platform=lambda name:platform,
+                            engine=SimpleNamespace(expressions=SimpleNamespace(settings=ExpressionSettings())),close=lambda:None)
     monkeypatch.setattr(web,"build",lambda cfg:runtime)
     server=ThreadingHTTPServer(("127.0.0.1",0),handler_for(path,"token"))
     thread=Thread(target=server.serve_forever,daemon=True);thread.start()

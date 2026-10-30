@@ -47,6 +47,7 @@ class SocialEngine:
                  private_access: Mapping[str, PrivateMessageAccess] | None = None,
                  vision: VisionService | None = None, expressions: ExpressionService | None = None,
                  memory: MemoryService | None = None, owner_activity=None):
+        self.routing = None  # Optional composition-owned platform/account routes.
         self.owner_activity = owner_activity
         self.settings, self.store, self.model, self.persona = settings, store, model, persona
         self.providers, self.sinks = dict(providers), dict(sinks)
@@ -97,7 +98,8 @@ class SocialEngine:
     def queue_manual_send(self, action_id: str, now: float | None = None):
         now = time.time() if now is None else now
         original = self.store.manual_send_target(action_id)
-        if original.account_id != self.settings.account_id or original.platform != self.settings.platform:
+        routes = self.routing() if self.routing else ((self.settings.platform, self.settings.account_id),)
+        if not any(original.platform == platform and original.account_id == account for platform, account in routes):
             raise ValueError("登录账号或平台已变化，不能发送旧消息")
         if self.paused(original.platform):
             raise ValueError("工作已暂停，请先核对原因并恢复；重发不会自动解除暂停")
@@ -144,7 +146,7 @@ class SocialEngine:
         now = time.time() if now is None else now
         if self.paused():
             return False
-        event = self.store.claim_event(now)
+        event = self.store.claim_event(now, **({"routes": self.routing()} if self.routing else {}))
         if event is None:
             return False
         try:
@@ -228,6 +230,8 @@ class SocialEngine:
             self.store.add_memory(person, "person", purpose, topic, event.event_id, now, kind="preference")
             self.store.set_setting(clock_key, event.occurred_at)
             return {"kind": "preference", "status": "saved"}
+        if self.routing and self.settings.platform not in self.providers:
+            raise PolicyError("当前未启用内容查找平台，视频委托尚不能执行")
         binding = self.store.binding(person, self.settings.platform)
         if not binding or binding["purpose"] != "owner_video_recommendation":
             raise PolicyError("主人尚未绑定允许投递的目标账号")
@@ -294,7 +298,7 @@ class SocialEngine:
                 self.store.set_setting(checkpoint, intent)
         scope = f"conversation:{event.platform}:{event.conversation_id}"
         context = self.memory_service.context(event,person,owner,now)
-        if owner and self.owner_activity:
+        if owner and self.owner_activity and event.platform == self.settings.platform:
             context.update(self.owner_activity.private_context(person,now))
         social = self.social.context(event=event,person=person,channel="private",now=now)
         result, options = self.message_decision("private_chat", {
@@ -370,7 +374,10 @@ class SocialEngine:
             raise PolicyError("回复决策类型无效")
         topic = combined_topic(local,result.get("topic_class"))
         if blocked(topic,owner):
-            self.store.audit("topic_skipped","模型判断需跳过公开话题，或分类缺失",now)
+            reason = {"unknown": "模型话题分类缺失、无效或未知，按规则跳过",
+                      "sensitive": "敏感公开话题，按规则跳过",
+                      "serious": "非主人严肃话题，按规则跳过"}[topic]
+            self.store.audit("topic_skipped",reason,now)
             return
         if document:
             document = replace(document,topic_class=topic)
@@ -648,7 +655,7 @@ class SocialEngine:
         now = time.time() if now is None else now
         if not self.settings.model_review or self.settings.draft or self.paused():
             return False
-        action = self.store.claim_review_action(now,strategy=self.settings.review_strategy)
+        action = self.store.claim_review_action(now,strategy=self.settings.review_strategy, **({"routes": self.routing()} if self.routing else {}))
         if action is None:
             return False
         if self.settings.review_strategy=="inline":
@@ -668,7 +675,8 @@ class SocialEngine:
                                          self.settings.browsing_enabled and next_window(now, self.settings.timezone, self.settings.windows, self.settings.weekdays) == now,
                                          manual_only=self.settings.draft, require_review=self.settings.model_review and pre_reviewed_only,
                                          required_review_method=self.settings.review_strategy if self.settings.model_review and pre_reviewed_only else "",
-                                         autonomous_kinds=self.autonomy.allowed_kinds(now))
+                                         autonomous_kinds=self.autonomy.allowed_kinds(now),
+                                         **({"routes": self.routing()} if self.routing else {}))
         if action is None:
             return False
         # Read the clock again after any preceding slow operation; test clocks remain deterministic.

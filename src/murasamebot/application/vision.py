@@ -100,13 +100,16 @@ class VisionService:
                     limits.append(f"第{ref.index}张为动态图，不保证理解所有帧")
         if total > self.settings.max_images:
             limits.append(f"共{total}张，本次最多读取前{self.settings.max_images}张")
-        summary = ""
+        downloaded = len(inputs)
+        summary, failure_stage = "", ""
         if inputs:
+            failure_stage = "模型调用或JSON解析"
             try:
                 result = self.model.decide("describe_images", {"title": document.title, "post_text": document.text,
                     "image_indices": indices, "total_images": total, "_image_inputs": inputs,
                     "media_kind": "video_frames" if is_frames else "images", "frame_samples": samples,
                     "coverage": list(document.frame_context.limitations) if is_frames else []})
+                failure_stage = "视觉结果字段校验"
                 descriptions = result.get("images")
                 if (not isinstance(descriptions, list) or len(descriptions) != len(indices) or
                         any(not isinstance(row, dict) or type(row.get("index")) is not int for row in descriptions) or
@@ -121,9 +124,13 @@ class VisionService:
                 uncertainty = result.get("uncertainties", [])
                 if isinstance(uncertainty, list):
                     limits.extend(str(item)[:200] for item in uncertainty[:9])
+                failure_stage = ""
             except (ModelError, ValueError, TypeError, KeyError):
+                summary = ""
                 indices, hashes = [], []
-                limits.append("视觉分析未完成，不能据此描述图片")
+                limits.append(f"图片已下载{downloaded}/{total}张，但{failure_stage}失败；视觉分析未完成，不能据此描述图片")
+        elif not inputs:
+            failure_stage = "图片下载"
         status = "complete" if len(indices) == total else "partial" if indices else "failed"
         visual = VisualEvidence(status, summary, tuple(indices), total, self.model_name, signature, now,
                                 now + self.settings.failure_retry_minutes * 60, tuple(limits), tuple(hashes))
@@ -131,5 +138,6 @@ class VisionService:
                                  for s in samples if s["index"] in indices) if is_frames and indices else ""
         if is_frames and document.frame_context.status != "complete":
             detail += "；快照覆盖：" + document.frame_context.status + "；" + "；".join(document.frame_context.limitations)[:500]
-        self.store.audit("vision_result", f"{document.ref.key}: {status}，读取{len(indices)}/{total}张" + detail, now)
+        stage = f"；失败阶段：{failure_stage}" if failure_stage else ""
+        self.store.audit("vision_result", f"{document.ref.key}: {status}，图片下载{downloaded}/{total}张；有效识别{len(indices)}/{total}张" + stage + detail, now)
         return replace(document, visual=visual, evidence_level=visual_level if indices else level)

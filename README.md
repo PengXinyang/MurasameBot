@@ -1,5 +1,9 @@
 # MurasameBot
 
+当前已实现、待办与已知问题见[项目状态总览](docs/STATUS.md)；本地/模拟验收与真实账号效果分别记录。
+
+平台解耦Q0已编码：共享内核按启用模块装配，B站默认行为与协议文件保留；QQ真实连接器仍待接入。配置及扩展方法见[平台模块说明](docs/PLATFORM_MODULES.md)。
+
 丛雨的跨平台社交内核，首个实际适配目标为 B 站。当前版本 `0.1.0`，采用 **Python 3.12+**。
 
 开发入口：[AGENTS.md](AGENTS.md) → [架构](docs/ARCHITECTURE.md) → [技术决策](docs/DECISIONS.md) → [开发日志与已知问题](docs/DEVELOPMENT_LOG.md)。启动排障见[操作说明](docs/OPERATIONS.md)，全部项目记忆见[文档索引](docs/README.md)。这些文档不作为机器人聊天记忆加载。
