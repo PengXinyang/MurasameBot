@@ -1,6 +1,6 @@
 # 项目记忆索引
 
-索引更新：2026-10-30。各专题的代码核对日期见其正文。这些文档帮助后续开发恢复上下文；机器人运行时的角色与用户记忆不从这里加载。
+索引更新：2026-10-31。各专题的代码核对日期见其正文。这些文档帮助后续开发恢复上下文；机器人运行时的角色与用户记忆不从这里加载。
 
 | 文件 | 用途 |
 | --- | --- |
@@ -14,6 +14,7 @@
 | [DASHBOARD_MODULES.md](DASHBOARD_MODULES.md) | QQ/B站平台管理页、任务归属、共同设置及QQ/B站共同记忆/日记/相处回顾 |
 | [SOCIAL_STATES.md](SOCIAL_STATES.md) | 带来源社交记录、短期角色状态、公开感受、跟进与管理 |
 | [VIDEO_VISION.md](VIDEO_VISION.md) | 视频快照配置、裁图/时间映射、视觉证据及降级边界 |
+| [VIDEO_UNDERSTANDING_PLAN.md](VIDEO_UNDERSTANDING_PLAN.md) | 视频理解规划（未开发）：分镜总览、高清细看、分析资产、上游分支对比、阶段与验收 |
 | [ROADMAP.md](ROADMAP.md) | 跨平台、Docker、语音与视频投稿等尚未实现的范围 |
 | [QQ_INTEGRATION.md](QQ_INTEGRATION.md) | QQ功能范围、模块化单体选择、规划基线与Q0～Q4验收；Q0已编码、QQ未接入 |
 | [PLATFORM_MODULES.md](PLATFORM_MODULES.md) | 已编码的Q0平台模块、惰性装配、启停、路由/队列保护、兼容入口与后续边界 |
