@@ -59,6 +59,7 @@ class Config:
                      "bilibili":{"private_poll_seconds":30},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "limits":{"event_retry_seconds":60},
+                     "browsing":{"recommendation_only":True,"min_video_views":8000,"min_video_comments":20},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
                                 "gfwlist_cache":"data/gfwlist.txt", "gfwlist_refresh_hours":6,
                                 "direct_domains":list(DIRECT_DOMAINS)}},raw)
@@ -204,6 +205,12 @@ class Config:
             raise ValueError("首版所有文字输出固定为中文；日语仅为未来语音预留")
         ZoneInfo(data.get("timezone", "Asia/Hong_Kong"))
         browse = data.get("browsing", {})
+        if type(browse.get("recommendation_only",True)) is not bool:
+            raise ValueError("仅推荐模式需要为布尔值")
+        for key in ("min_video_views", "min_video_comments"):
+            value = browse.get(key,8000 if key == "min_video_views" else 20)
+            if type(value) is not int or not 0 <= value <= 10**12:
+                raise ValueError("视频推荐统计门槛须为0到1000000000000的整数")
         if type(browse.get("allow_metadata_video", True)) is not bool:
             raise ValueError("标题和简介分析开关需要为布尔值")
         if any(type(browse.get(key, True)) is not bool for key in ("comment_videos", "reply_comments", "recommend_owner")):
@@ -399,6 +406,8 @@ class Config:
                          windows=tuple((w["start"], w["end"]) for w in browse["windows"]),
                          weekdays=tuple(browse["weekdays"]), browsing_enabled=browse["enabled"],
                          allow_metadata_video=browse.get("allow_metadata_video", True),
+                         recommendation_only=browse.get("recommendation_only",True),
+                         min_video_views=browse.get("min_video_views",8000),min_video_comments=browse.get("min_video_comments",20),
                          **{key: browse.get(key, True) for key in ("comment_videos", "reply_comments", "recommend_owner")},
                          **{key: self.data.get("engagement", {}).get(key, False) for key in ("video_like", "video_coin", "dynamic_like")},
                          interval_minutes=browse["interval_minutes"], videos_per_round=browse["videos_per_round"],

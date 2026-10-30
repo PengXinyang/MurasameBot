@@ -233,6 +233,16 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                 if (blocked(action.topic_class,owner) or blocked(document_topic(document,event.text if event else ""),owner)
                         or local_topic(action.text)=="sensitive"):
                     return "公开话题限制：敏感、非主人严肃话题或未完成分类；人工批准也不放行"
+            if action.content and action.content.kind == "video" and action.kind in {"recommendation", "task_result", "browse_comment", "browse_reply", "owner_comment", "reply"}:
+                from murasamebot.application.recommendation_policy import popularity_allows
+                browse = current.data["browsing"]
+                document = store.cached_document(action.content,now) if action.content else None
+                source_event = store.event(action.event_id) if action.event_id else None
+                explicit_mention = (action.kind == "reply" and action.visibility == "public" and source_event and source_event.kind == "mention"
+                    and source_event.visibility == "public" and source_event.platform == action.platform
+                    and source_event.account_id == action.account_id and source_event.content == action.content)
+                if not explicit_mention and not popularity_allows(document,browse.get("min_video_views",8000),browse.get("min_video_comments",20)):
+                    return "视频统计缺失或未超过当前推荐门槛，禁止推荐"
             if action.owner_activity_version:
                 active_history = current_history(current)
                 reason = active_history.guard(action,now) if active_history else "主人观察服务不可用"

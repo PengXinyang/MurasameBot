@@ -131,6 +131,8 @@ class Document:
     comment_context: CommentContext | None = None
     topic_class: str = "unknown"
     frame_context: FrameContext | None = None
+    view_count: int | None = None
+    comment_count: int | None = None
 
     def public_context(self) -> dict[str, Any]:
         return asdict(self)

@@ -489,7 +489,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         images = self.dynamic_images(item) if ref.kind in {"dynamic", "post", "draw"} else frame_images
         parent = ContentRef("bilibili", "post", post_id) if ref.kind in {"dynamic", "post", "draw"} else None
         return Document(ref, title, body[:20000], level, author, category, url, comments, images, parent=parent,
-                        comment_context=coverage, frame_context=frame_context)
+                        comment_context=coverage, frame_context=frame_context,
+                        view_count=(data.get("stat") or {}).get("view") if ref.kind == "video" else None,
+                        comment_count=(data.get("stat") or {}).get("reply") if ref.kind == "video" else None)
 
     @staticmethod
     def dynamic_images(item: dict) -> tuple[ImageRef, ...]:

@@ -97,6 +97,8 @@ flowchart TD
 
 ### 请求控制
 
+视频推荐/互动策略新增通用`application/recommendation_policy.py`，只比较Document的view_count/comment_count与配置值；B站适配器负责从view.stat.view/reply映射。配置装配、模型行为提示与程序硬检查分离，Runtime使用最新配置复查待发消息；仅真实视频直接@事件可豁免统计要求。旧JSON缺字段仍可读取，内容服务按需刷新缺统计的视频缓存。详见D38及操作说明。
+
 2026-10-30视频快照兼容：`VideoShotReader`在BV响应无有效帧时，先尝试同响应的`pvdata`大端uint16时间表，再按AV+cid查询，最后仅首P尝试`/pvideo`；二进制读取使用独立无Cookie、无认证头、限制域名/重定向/大小的客户端。所有API兼容请求继续走原共享请求控制；认证/限流立即中止回退。详见D37与视频视觉专题。
 
 `RequestMonitor`/`MonitoredTransport`包装B站API客户端，AI与主人角色共享GET时间槽，角色/通道冷却隔离。日志仅端点元数据。`-509`/HTTP429读取失败使用退避，尚未写出的动作通过`retry_at`等候，不改原`not_before`和有效期；认证/验证码/写入风险仍有平台暂停。计划前静默停止后台采集，私信最后定向预检可越过静默但不能越过实际冷却。

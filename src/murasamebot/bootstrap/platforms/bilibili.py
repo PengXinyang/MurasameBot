@@ -150,6 +150,8 @@ class BilibiliModule(PlatformModule):
 
 
     def guard(self, config, action, now):
+        if config.data["browsing"].get("recommendation_only",True) and action.kind in {"browse_comment", "browse_reply", "owner_comment"}:
+            return "仅推荐模式：禁止主动普通评论与接话"
         if action.kind in {"browse_comment", "browse_reply", "recommendation"}:
             key = {"browse_comment": "comment_videos", "browse_reply": "reply_comments", "recommendation": "recommend_owner"}[action.kind]
             if not config.data["browsing"].get(key, True):

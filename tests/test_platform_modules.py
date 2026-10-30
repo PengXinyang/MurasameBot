@@ -248,12 +248,12 @@ def test_owner_new_content_comment_survives_platform_capability_gate(tmp_path, n
     from murasamebot.domain.models import Document
     from murasamebot.bootstrap.platforms.bilibili import BilibiliModule, CAPABILITIES
     config = Config(write_config(tmp_path))
-    config.save_local({"mode": "auto"})
+    config.save_local({"mode": "auto", "browsing": {"recommendation_only": False}})
     adapter = TestPlatform()
     adapter.account_id, adapter.configured = "robot", True
     adapter.close = lambda: None
     adapter.emoji_options = lambda *args: ()
-    adapter.documents[adapter.ref.key] = Document(adapter.ref, "摄影入门", "曝光和构图的练习方法。", "transcript", "424242", "188")
+    adapter.documents[adapter.ref.key] = Document(adapter.ref, "摄影入门", "曝光和构图的练习方法。", "transcript", "424242", "188",view_count=9000,comment_count=30)
     runtime = build(Config(config.path), platform_factories={"bilibili": lambda c, s:
         BilibiliModule("bilibili", adapter, CAPABILITIES)})
     runtime.engine.model = TestModel()

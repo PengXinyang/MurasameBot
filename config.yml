@@ -147,6 +147,9 @@ browsing:
   comment_videos: true
   reply_comments: true
   recommend_owner: true
+  recommendation_only: true  # ordinary proactive comments/replies are disabled
+  min_video_views: 8000  # strict >, unknown counts cannot qualify
+  min_video_comments: 20  # strict >; includes explicit tasks and private recommendations
   weekdays: [0, 1, 2, 3, 4, 5, 6]  # Monday = 0
   windows:
     - start: "19:00"

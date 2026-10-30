@@ -22,6 +22,9 @@ class Behaviour:
     comment_videos: bool = True
     reply_comments: bool = True
     recommend_owner: bool = True
+    recommendation_only: bool = False
+    min_video_views: int | None = None
+    min_video_comments: int | None = None
     video_like: bool = False
     video_coin: bool = False
     dynamic_like: bool = False
