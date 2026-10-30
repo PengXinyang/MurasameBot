@@ -13,6 +13,26 @@
 
 .workspace-footer svg{width:13px;height:13px}.pill.state-draft{color:#8a7192;background:#f0ebf4}.pill.state-unknown,.pill.state-failed{color:#a07558;background:#f9efe4}.pill.state-reviewing,.pill.state-sending{color:#73909a;background:#e9f0f0}
 
+/* Platform navigation and shared modules. */
+.sidebar .primary-nav{display:block;min-height:0;overflow-y:auto;flex:1;margin-right:-8px;padding-right:8px}
+.nav-group{display:grid;gap:3px;margin:0 0 11px}
+.nav-heading{margin:8px 12px 3px;font-size:10px;font-weight:700;letter-spacing:1px;color:#87967c}
+.primary-nav button{padding:9px 13px;font-size:12px;min-height:38px;width:100%}
+.nav-symbol{width:18px;height:18px;text-align:center;color:#688c72;font-weight:700;flex-shrink:0}
+.sidebar-bottom{padding-top:12px}.sidebar .nav-label{display:none}
+.platform-badge{display:inline-flex;padding:8px 15px;border-radius:20px;background:#e7f0eb;color:#496b56;font-weight:700;font-size:13px;white-space:nowrap}
+.connection-details{margin:15px 0}.connection-details>div{display:flex;justify-content:space-between;gap:15px;padding:8px 0;border-bottom:1px solid var(--line)}
+.connection-details dt{font-size:12px;color:#68785e}.connection-details dd{margin:0;font-size:12px;overflow-wrap:anywhere;text-align:right}
+.shared-module-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;padding:13px 17px;border:1px solid #dce5d7;border-radius:12px;background:#f5f8f0}
+.shared-module-bar p{margin:0;font-size:12px;color:#617359;flex:1;min-width:180px}
+.shared-module-bar label{display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap}
+.shared-module-bar select{width:115px;padding:7px 9px}.message-body{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}
+.conversation-agent{background:#f5f8f0;border-radius:8px;padding:14px!important;margin:8px 0}
+#qq-conversations{max-height:600px;overflow-y:auto}#qq .settings-grid{margin-bottom:20px}
+#qq .metric{min-height:105px}#common-settings .save-bar .notice{max-width:70%;margin:0}
+@media(max-width:850px){.sidebar .primary-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;flex:none;margin:0;padding:0 0 12px}.nav-group{display:contents}.nav-heading{grid-column:1/-1;margin:9px 4px 2px;font-size:10px}.primary-nav button{justify-content:center;padding:8px 5px;font-size:11px;min-width:0;white-space:normal}.nav-symbol{display:none}.shared-module-bar{gap:8px;padding:12px}.shared-module-bar label{margin-left:auto}}
+@media(max-width:620px){.shared-module-bar p{min-width:160px;font-size:11px}.shared-module-bar label{width:100%;justify-content:space-between}.connection-details dd{max-width:65%}#common-settings .save-bar .notice{font-size:10px;max-width:60%}}
+
 /* Comfortable contrast for small Chinese text; decoration stays deliberately soft. */
 .notice,.meta,.section-intro p,.settings-card .card-description{color:#68785e;font-size:11px}
 .field>label,#limitfields label{color:#5c7052;font-size:12px}

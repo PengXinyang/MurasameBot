@@ -66,11 +66,28 @@ class SQLiteObservationDiary:
                            [(self.agent_id,person,platform,pid,rid,context["auth"],context["revision"],binding["version"]) for rid in ids])
             return True
 
-    def memory_feed(self, kind, limit=50):
+    def memory_feed(self, kind, limit=50, *, platform=""):
         if kind not in {"memory","diary","reflection"}:
             raise ValueError("未知记忆板块")
         where = "kind NOT IN ('diary','reflection')" if kind=="memory" else "kind=?"
         params = (self.agent_id,) if kind=="memory" else (self.agent_id,kind)
+        platform_where = ""
+        if platform:
+            platform_where = """ AND (EXISTS (SELECT 1 FROM memory_sources s JOIN conversation_records r
+                ON r.agent_id=s.agent_id AND r.record_id=s.record_id WHERE s.agent_id=memory_products.agent_id
+                AND s.product_id=memory_products.product_id AND r.active=1 AND r.platform=?)
+                OR (?='bilibili' AND purpose='owner_observation_diary'))"""
+            params += (platform,platform)
         with self.connection() as db:
-            rows = db.execute(f"SELECT * FROM memory_products WHERE agent_id=? AND active=1 AND {where} ORDER BY created_at DESC,product_id LIMIT ?",(*params,min(100,limit))).fetchall()
-        return [dict(r) for r in rows]
+            rows = db.execute(f"SELECT * FROM memory_products WHERE agent_id=? AND active=1 AND {where}{platform_where} ORDER BY created_at DESC,product_id LIMIT ?",(*params,min(100,limit))).fetchall()
+            result = []
+            for row in rows:
+                item = dict(row)
+                sources = db.execute("""SELECT DISTINCT r.platform FROM memory_sources s JOIN conversation_records r
+                    ON r.agent_id=s.agent_id AND r.record_id=s.record_id
+                    WHERE s.agent_id=? AND s.product_id=? AND r.active=1 ORDER BY r.platform""",(self.agent_id,item['product_id'])).fetchall()
+                item['platforms'] = [r[0] for r in sources]
+                if item['purpose']=='owner_observation_diary':
+                    item['platforms'] = ['bilibili']
+                result.append(item)
+        return result

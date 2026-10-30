@@ -125,7 +125,22 @@ class SQLiteMemory:
             return
         source = db.execute("SELECT payload,state FROM events WHERE agent_id=? AND event_id=?", (self.agent_id,action.event_id)).fetchone()
         if source and source[1] != "deleted":
-            self._archive_event(db,Event.from_dict(json.loads(source[0])),role="agent",text=action.text,
+            event = Event.from_dict(json.loads(source[0]))
+            if action.platform != event.platform or action.visibility != event.visibility:
+                # A chat-originated public result was spoken on its delivery
+                # platform, not as an extra private message on the source chat.
+                if db.execute("SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?",(self.agent_id,event.event_id)).fetchone():
+                    return
+                person = db.execute("SELECT person_id FROM bindings WHERE agent_id=? AND platform=? AND external_id=? AND active=1",
+                    (self.agent_id,event.platform,event.actor_id)).fetchone()
+                person = person[0] if person else f"unlinked:{event.platform}:{event.actor_id}"
+                conversation = action.conversation_id or (action.content.key if action.content else f"{action.platform}:{action.account_id}:public_posts")
+                db.execute("INSERT OR IGNORE INTO conversation_records VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                    (self.agent_id,stable_id(self.agent_id,"outgoing",action.action_id),event.event_id,person,
+                     f"conversation:{action.platform}:{conversation}","private_dialogue" if action.visibility=='private' else 'public_dialogue',
+                     action.platform,action.account_id,conversation,action.visibility,'agent',action.text,now))
+                return
+            self._archive_event(db,event,role="agent",text=action.text,
                                 record_id=stable_id(self.agent_id,"outgoing",action.action_id),occurred_at=now)
 
     def memory_backfill(self, limit=200):

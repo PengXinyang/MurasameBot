@@ -118,3 +118,9 @@ SQLite保存`bindings`、`events`、`tasks`、`actions`、内容缓存、浏览�
 `AutonomyService`在原后台通道选择到期角色状态，决定私信/动态或skip，保存原Action中的`social_refs/social_followups/social_version`，不新增轮询或发送器。公开来源可提供摘录，主人私人来源只提供感受标签和限制；独立审核也不接收原私密来源。源、状态及配置在生成后/入队/领取/最终写入前核验；平台受理才增加累计提起次数。管理台独立“心情与线索”页面通过鉴权`/api/social`及仅结束/遗忘的`/api/social/manage`管理，操作不直接发平台消息。详见[社交状态](SOCIAL_STATES.md)。
 
 QQ私人渠道策略由模块装配到共享内核（多语言/关闭公开话题筛选），私有视频读取通过`PrivateVideoProvider`包装同一B站协议适配器；公开入口默认仍筛选话题。任务路由决定使用哪个入口，QQ适配器不直接调用B站适配器，绑定/记忆/审核/outbox仍共用。
+
+### 平台管理台与共同模块（2026-10-30）
+
+管理台导航和浏览器代码按QQ/B站分开（`qq-console.js`、`bilibili-console.js`）；`console-common.js`与`shared-memory.js`服务共同设置、记忆/日记/相处回顾。`bootstrap/console.py`与SQLiteConsole提供鉴权后的有界平台投影，不启动模型/发送循环。任务按来源归属，动作按实际投递平台可核查。
+
+共同记录仍使用原MemoryService维护；feed按原文平台关联筛选后限量。跨平台受理输出以实际投递平台/可见性入档并保留源事件关联；同平台旧路径不变。日记/回顾不是各平台独立循环，共同设置中的查找时段与预算仍按原执行语义供两端使用。详见[管理台模块](DASHBOARD_MODULES.md)。

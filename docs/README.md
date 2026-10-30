@@ -11,6 +11,7 @@
 | [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md) | 已完成、验证程度、已知问题及下一步；开始开发前必读 |
 | [OPERATIONS.md](OPERATIONS.md) | 启动、配置、登录、审核、请求控制、排障与验收 |
 | [RUNTIME_MEMORY.md](RUNTIME_MEMORY.md) | 用户记忆/委托/观察的区别、持久化、遗忘及尚存缺口 |
+| [DASHBOARD_MODULES.md](DASHBOARD_MODULES.md) | QQ/B站平台管理页、任务归属、共同设置及QQ/B站共同记忆/日记/相处回顾 |
 | [SOCIAL_STATES.md](SOCIAL_STATES.md) | 带来源社交记录、短期角色状态、公开感受、跟进与管理 |
 | [VIDEO_VISION.md](VIDEO_VISION.md) | 视频快照配置、裁图/时间映射、视觉证据及降级边界 |
 | [ROADMAP.md](ROADMAP.md) | 跨平台、Docker、语音与视频投稿等尚未实现的范围 |

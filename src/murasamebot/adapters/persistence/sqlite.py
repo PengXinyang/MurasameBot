@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from murasamebot.domain.models import Action, ContentRef, Document, Event, ModelError, Receipt, stable_id
 from murasamebot.adapters.persistence.memory import MEMORY_SCHEMA, SQLiteMemory, query_terms
+from murasamebot.adapters.persistence.console import SQLiteConsole
 
 
 def dumps(value: Any) -> str:
@@ -80,7 +81,7 @@ from murasamebot.adapters.persistence.observation_diary import SQLiteObservation
 from murasamebot.adapters.persistence.social import SQLiteSocial, SOCIAL_SCHEMA
 
 
-class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObservationDiary, SQLiteSocial):
+class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObservationDiary, SQLiteSocial, SQLiteConsole):
     def __init__(self, path: str | Path, agent_id: str):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -20,7 +20,7 @@ murasame = "murasamebot.bootstrap.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"murasamebot.bootstrap" = ["dashboard.html", "dashboard.css", "owner-history.js", "request-controls.js", "social-state.js"]
+"murasamebot.bootstrap" = ["dashboard.html", "dashboard.css", "owner-history.js", "request-controls.js", "social-state.js", "console-common.js", "bilibili-console.js", "qq-console.js", "shared-memory.js"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

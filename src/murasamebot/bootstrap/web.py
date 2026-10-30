@@ -9,7 +9,7 @@ import secrets
 import sqlite3
 from threading import Event, Thread
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.runtime import build, prepare_store, readiness
@@ -86,12 +86,15 @@ def handler_for(config_path: Path, token: str):
 
         def do_GET(self):
             path = urlparse(self.path).path
-            if path in {"/assets/dashboard.css","/assets/owner-history.js","/assets/request-controls.js","/assets/social-state.js"} or path in CHARACTER_ASSETS:
+            console_assets = {"/assets/"+name for name in ("console-common.js","bilibili-console.js","qq-console.js","shared-memory.js")}
+            if path in console_assets or path in {"/assets/dashboard.css","/assets/owner-history.js","/assets/request-controls.js","/assets/social-state.js"} or path in CHARACTER_ASSETS:
                 if self.headers.get("Host", "").split(":")[0] not in {"127.0.0.1", "localhost"}:
                     self.response(401, {"error": "仅限本机访问"})
                     return
                 try:
-                    if path == "/assets/social-state.js":
+                    if path in console_assets:
+                        self.response(200,Path(__file__).with_name(path.rsplit('/',1)[-1]).read_bytes(),content_type="text/javascript; charset=utf-8")
+                    elif path == "/assets/social-state.js":
                         self.response(200,Path(__file__).with_name("social-state.js").read_bytes(),content_type="text/javascript; charset=utf-8")
                     elif path == "/assets/request-controls.js":
                         self.response(200,Path(__file__).with_name("request-controls.js").read_bytes(),content_type="text/javascript; charset=utf-8")
@@ -124,6 +127,9 @@ def handler_for(config_path: Path, token: str):
                 config = Config(config_path)
                 if path == "/api/config":
                     self.response(200, config.public())
+                elif path.startswith('/api/platforms/'):
+                    from murasamebot.bootstrap.console import platform_console
+                    self.response(200,platform_console(config,path.rsplit('/',1)[-1]))
                 elif path == "/api/requests":
                     self.response(200,{"settings":config.data["requests"],"private_poll_seconds":config.data["bilibili"]["private_poll_seconds"],
                         "status":prepare_store(config).request_status(time.time(),RequestSettings(**config.data["requests"]))})
@@ -152,7 +158,10 @@ def handler_for(config_path: Path, token: str):
                     self.response(200,prepare_store(config).memory_scopes())
                 elif path == "/api/memory/journals":
                     store=prepare_store(config)
-                    feeds={kind:store.memory_feed(kind) for kind in ("memory","diary","reflection")}
+                    platform = parse_qs(urlparse(self.path).query).get('platform',[''])[0]
+                    if platform not in {'','qq','bilibili'}:
+                        raise ValueError('未知记忆来源平台')
+                    feeds={kind:store.memory_feed(kind,platform=platform) for kind in ("memory","diary","reflection")}
                     with optional_history(config,store) as observations:
                         if observations is None or not observations.diary_authorized():
                             feeds["diary"]=[p for p in feeds["diary"] if p["purpose"]!="owner_observation_diary"]
@@ -190,7 +199,10 @@ def handler_for(config_path: Path, token: str):
                 config = Config(config_path)
                 store = prepare_store(config)
                 path = urlparse(self.path).path
-                if path == "/api/owner-history/login/start":
+                if path == "/api/qq/check":
+                    from murasamebot.bootstrap.console import check_qq
+                    self.response(200,check_qq(config))
+                elif path == "/api/owner-history/login/start":
                     self.response(200,owner_login.start(config,store))
                     return
                 elif path == "/api/owner-history/login/poll":

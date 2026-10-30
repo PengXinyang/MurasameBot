@@ -440,9 +440,11 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
+        if not isinstance(patch.get("qq",{}),dict) or set(patch.get("qq",{})) - {"quiet_seconds","max_wait_seconds","max_reply_messages"}:
+            raise ValueError("QQ账号、接口与密钥请在本地私密配置中管理")
         if set(patch.get("network", {})) - {"proxy_enabled", "proxy_url", "proxy_mode", "gfwlist_refresh_hours", "direct_domains"}:
             raise ValueError("规则来源和缓存路径请在本地配置文件中管理")
         if set(patch.get("artwork", {})) - {"enabled", "delivery", "times", "weekdays", "grace_minutes", "candidate_limit", "max_caption_characters", "keywords", "sources"}:
