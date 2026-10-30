@@ -18,7 +18,8 @@ from murasamebot.domain.models import ImageInput, ImageRef, MediaError
 class HTTPImageReader:
     """Cookie-free, bounded image reads; no redirects and no arbitrary hosts."""
 
-    def __init__(self, *, hosts: tuple[str, ...], proxy_url="", client: httpx.Client | None = None):
+    def __init__(self, *, hosts: tuple[str, ...], proxy_url="", client: httpx.Client | None = None, referer="https://www.bilibili.com/"):
+        self.referer = referer
         self.hosts = frozenset(hosts)
         self.client = client or network_client(proxy_url=proxy_url, timeout=25)
         self._batch = ContextVar("image_batch", default=None)
@@ -52,7 +53,7 @@ class HTTPImageReader:
                 if source_limit <= 0:
                     raise MediaError("image_batch_too_large")
                 self.client.cookies.clear()
-                with self.client.stream("GET", ref.url, headers={"Referer": "https://www.bilibili.com/"}, follow_redirects=False) as response:
+                with self.client.stream("GET", ref.url, headers={"Referer": self.referer} if self.referer else {}, follow_redirects=False) as response:
                     if response.status_code != 200:
                         raise MediaError(f"image_http_{response.status_code}")
                     if int(response.headers.get("content-length") or 0) > source_limit:

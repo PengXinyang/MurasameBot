@@ -15,6 +15,8 @@ class PlatformModule:
     artwork: object = None
     monitor: object = None
     poll_seconds: int = 15
+    private_policy: dict | None = None
+    private_content_provider: object = None
 
     @property
     def account_id(self):
@@ -48,7 +50,10 @@ def default_factories():
     def bilibili(config, store):
         from murasamebot.bootstrap.platforms.bilibili import build_module
         return build_module(config, store)
-    return {"bilibili": bilibili}
+    def qq(config, store):
+        from murasamebot.bootstrap.platforms.qq import build_module
+        return build_module(config, store)
+    return {"bilibili": bilibili, "qq": qq}
 
 
 def prepare_platform_state(config, store):

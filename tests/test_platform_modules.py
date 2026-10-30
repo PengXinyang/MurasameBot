@@ -208,10 +208,15 @@ def test_unsupported_capability_is_rejected_by_final_policy(tmp_path, now):
         runtime.close()
 
 
-def test_unimplemented_qq_is_explicit_error_not_silent_bilibili_fallback(tmp_path):
+def test_registered_qq_is_not_a_bilibili_fallback(tmp_path):
     config = qq_config(tmp_path)
-    with pytest.raises(ValueError, match="尚无连接器：qq"):
-        build(config)
+    runtime = build(config)
+    try:
+        from murasamebot.adapters.platforms.qq import QQAdapter
+        assert isinstance(runtime.platform, QQAdapter)
+        assert not runtime.platform.configured
+    finally:
+        runtime.close()
 
 
 @pytest.mark.parametrize("platforms", [[], {"QQ": {"enabled": True}}, {"qq": True}, {"qq": {"enabled": "false"}}, {"qq": {"enabled": True, "token": "secret"}}])

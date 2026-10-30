@@ -30,6 +30,7 @@ class MemorySettings:
 class MemoryService:
     def __init__(self, store: MemoryRepository, model: ModelGateway, settings: MemorySettings | None = None,
                  *, timezone="Asia/Hong_Kong", observations=None, persona="", observation_guard=None):
+        self.shared_owner_private = False
         self.store, self.model = store, model
         self.settings = settings or MemorySettings()
         self.timezone = timezone
@@ -44,9 +45,18 @@ class MemoryService:
         scope = f"conversation:{event.platform}:{event.conversation_id}"
         purpose = "private_dialogue" if event.visibility == "private" else "public_dialogue"
         history = self.store.memory_records(person,scope,purpose,limit=self.settings.recent_messages,before=event.occurred_at)
+        shared_products = []
+        if owner and event.visibility == "private" and self.shared_owner_private:
+            for other in self.store.memory_scopes():
+                binding = self.store.binding(person, other["platform"])
+                if (other["person_id"] == person and other["purpose"] == "private_dialogue"
+                        and other["scope"] != scope and other["platform"] in {"qq","bilibili"} and binding):
+                    history += self.store.memory_records(person,other["scope"],"private_dialogue",limit=self.settings.recent_messages,before=event.occurred_at)
+                    shared_products += self.store.memory_products(person,other["scope"],"private_dialogue",limit=20)
+            history = sorted(history,key=lambda r:r["occurred_at"],reverse=True)[:self.settings.recent_messages]
         seen = {r["record_id"] for r in history}
         recall = self.store.memory_records(person,scope,purpose,query=event.text,limit=self.settings.recall_limit,before=event.occurred_at)
-        products = self.store.memory_products(person,scope,purpose,limit=40)
+        products = shared_products + self.store.memory_products(person,scope,purpose,limit=40)
         products += self.store.memory_products(person,scope,purpose,limit=40,query=event.text)
         products += self.store.memory_corrections([r["record_id"] for r in history+recall])
         products = list({p["product_id"]:p for p in products}.values())

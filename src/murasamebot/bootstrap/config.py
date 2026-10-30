@@ -66,6 +66,8 @@ class Config:
         if override and not isinstance(override, dict):
             raise ValueError("本地覆盖配置必须为对象")
         self.raw = merge(raw, override or {})
+        from murasamebot.bootstrap.platforms.qq import DEFAULTS
+        self.raw["qq"] = merge(DEFAULTS, self.raw.get("qq", {}))
         self.validate(self.raw)
 
         def expand(value):
@@ -92,6 +94,9 @@ class Config:
                     or not isinstance(options, dict) or set(options) != {"enabled"}
                     or type(options["enabled"]) is not bool):
                 raise ValueError("平台设置需要合法名称与 enabled 布尔开关")
+        if "qq" in data:
+            from murasamebot.bootstrap.platforms.qq import validate
+            validate(data["qq"])
         social = data.get("social", {})
         if not isinstance(social,dict) or set(social)-set(SocialSettings.__dataclass_fields__):
             raise ValueError("未知的社交状态设置")
@@ -402,6 +407,9 @@ class Config:
 
     def public(self) -> dict:
         data = deepcopy(self.data)
+        for key in ("access_token", "callback_secret"):
+            if "qq" in data:
+                data["qq"][key] = "已配置" if data["qq"].get(key) else "未配置"
         data["model"]["api_key"] = "已配置" if data["model"].get("api_key") else "未配置"
         if "vision" in data:
             data["vision"]["api_key"] = "已配置" if data["vision"].get("api_key") else "复用主模型服务或未配置"

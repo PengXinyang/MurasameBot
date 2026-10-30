@@ -16,6 +16,8 @@
 | [ROADMAP.md](ROADMAP.md) | 跨平台、Docker、语音与视频投稿等尚未实现的范围 |
 | [QQ_INTEGRATION.md](QQ_INTEGRATION.md) | QQ功能范围、模块化单体选择、规划基线与Q0～Q4验收；Q0已编码、QQ未接入 |
 | [PLATFORM_MODULES.md](PLATFORM_MODULES.md) | 已编码的Q0平台模块、惰性装配、启停、路由/队列保护、兼容入口与后续边界 |
+| [QQ_PRIVATE_CHAT.md](QQ_PRIVATE_CHAT.md) | QQ主人文字/图片私聊、网关安装、签名上报、静默合并、分条回复、共享私人记忆与大肥鱼参考 |
+| [QQ_BILIBILI_TASKS.md](QQ_BILIBILI_TASKS.md) | QQ视频委托、B站查找、QQ回传/B站提及、持久路由与取消竞态 |
 | [PROVENANCE.md](PROVENANCE.md) | 上一级资料如何提炼、哪些材料留在本机及历史结论的取舍 |
 | [VALIDATION.md](VALIDATION.md) | 本次推送对应的验证记录及证据限制 |
 

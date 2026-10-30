@@ -23,17 +23,17 @@ from murasamebot.ports import ActionSink, ContentProvider, ModelGateway, Private
 GROUNDED = {"transcript", "text", "visual", "text_visual", "transcript_visual"}
 
 
-def checked_text(value: object, limit: int) -> str:
+def checked_text(value: object, limit: int, *, multilingual=False) -> str:
     if not isinstance(value, str):
         raise PolicyError("回复正文必须为字符串")
     value = value.strip()
     if not value or len(value) > limit:
         raise PolicyError("回复为空或超过配置长度")
-    if re.search(r"[\u3040-\u30ff]|【[^】]+】|<[^>]+>", value):
+    if not multilingual and re.search(r"[\u3040-\u30ff]|【[^】]+】|<[^>]+>", value):
         raise PolicyError("当前渠道只接受中文正文，不接受日语、情绪标签或翻译标签")
     if re.search(r"https?://|www\.|@[\w\u4e00-\u9fff]", value, re.I):
         raise PolicyError("模型不得自行插入链接或指定提及对象")
-    if not re.search(r"[\u4e00-\u9fff]", value):
+    if not multilingual and not re.search(r"[\u4e00-\u9fff]", value):
         raise PolicyError("回复需要包含中文正文")
     return value
 
@@ -47,12 +47,17 @@ class SocialEngine:
                  private_access: Mapping[str, PrivateMessageAccess] | None = None,
                  vision: VisionService | None = None, expressions: ExpressionService | None = None,
                  memory: MemoryService | None = None, owner_activity=None):
+        self.request_route = None
+        self.content_urls = {}
         self.routing = None  # Optional composition-owned platform/account routes.
         self.owner_activity = owner_activity
         self.settings, self.store, self.model, self.persona = settings, store, model, persona
         self.providers, self.sinks = dict(providers), dict(sinks)
         self.action_policy = action_policy or (lambda action, now: "")
         self.private_access = dict(private_access or {})
+        self.private_visions = {}
+        self.private_policies = {}
+        self.private_content_providers = {}
         self.vision = vision
         self.expressions = expressions
         self.memory_service = memory or MemoryService(store,model,timezone=settings.timezone)
@@ -60,6 +65,8 @@ class SocialEngine:
         self.social = SocialService(store, settings.social, owner_person_id=settings.owner_person_id, observations=owner_activity)
 
     def message_decision(self, operation, payload, platform, account_id, channel, now):
+        if channel == "private":
+            payload = {**payload,"private_policy":dict(self.private_policies.get(platform,{}))}
         if operation in {"reply","private_chat","autonomous_post","autonomous_private"}:
             social = self.settings.social
             payload = {**payload,"social_rules":{"enabled":social.enabled,"ttl_hours":social.ttl_hours,
@@ -74,9 +81,9 @@ class SocialEngine:
             raise PolicyError("生成期间记忆来源发生变化，请重新生成")
         return {**result,"_memory_epoch":epoch}, options
 
-    def message_text(self, result, options, limit):
+    def message_text(self, result, options, limit, *, multilingual=False):
         text, emojis = self.expressions.compose(result, options, limit) if self.expressions else (result.get("text"), ())
-        text = checked_text(text, limit)
+        text = checked_text(text, limit, multilingual=multilingual)
         return text + "".join(e.token for e in emojis), emojis
 
     def enqueue_generated(self, action, result, now):
@@ -123,11 +130,12 @@ class SocialEngine:
             raise ValueError("事件缺少稳定身份或会话标识")
         return self.store.enqueue_event(event, baseline=baseline)
 
-    def document(self, ref: ContentRef, now: float, *, reply_to: str = "", root: str = "", context: ContentRef | None = None) -> Document:
+    def document(self, ref: ContentRef, now: float, *, reply_to: str = "", root: str = "", context: ContentRef | None = None, private=False) -> Document:
         # Reply chains must be refreshed; cached video facts alone are insufficient.
         cached = self.store.cached_document(ref, now)
         refresh_media = cached and self.vision and self.vision.needs_refresh(cached, now)
-        document = cached if cached and not refresh_media and not reply_to and context is None else self.providers[ref.provider].read(ref, reply_to=reply_to, root=root, context=context)
+        provider = self.private_content_providers.get(ref.provider,self.providers[ref.provider]) if private else self.providers[ref.provider]
+        document = cached if cached and not private and not refresh_media and not reply_to and context is None else provider.read(ref, reply_to=reply_to, root=root, context=context)
         if self.vision:
             document = self.vision.enrich(document, now, previous=cached)
         self.store.cache_document(document, now)
@@ -182,12 +190,16 @@ class SocialEngine:
             return {"kind": "none", "status": "stale"}
         tasks = self.store.active_tasks(person)
         preferences = self.store.memory(person, "person", "owner_video_recommendation", now)
-        result = self.model.decide("extract_intent", {
+        plain = re.sub(r"第\d+条：", "", event.text).strip()
+        simple_cancel = bool(self.request_route and event.platform=="qq" and tasks and re.fullmatch(
+            r"(?:算了[，, ]*)?(?:不想看了|不用找了|不用找视频了|取消任务|全部取消|都不用找了|都不想看了)[。！! ]*", plain))
+        result = {"kind":"cancel"} if simple_cancel else self.model.decide("extract_intent", {
             "message": event.text,
             "now": datetime.fromtimestamp(now, ZoneInfo(self.settings.timezone)).isoformat(),
             "timezone": self.settings.timezone,
-            "active_tasks": [{"task_id": task["task_id"], "topic": task["topic"]} for task in tasks],
+            "active_tasks": [{"task_id": task["task_id"], "topic": task["topic"], "delivery": task.get("route",{}).get("mode", "mention")} for task in tasks],
             "current_preferences": [row for row in preferences if row["kind"] == "preference"],
+            "private_policy":dict(self.private_policies.get(event.platform,{})) if event.visibility=="private" else {},
         })
         kind = result.get("kind", "none")
         current_binding = self.store.binding(person, event.platform)
@@ -209,6 +221,8 @@ class SocialEngine:
         if not isinstance(forget_ids, list) or any(item not in memory_ids for item in forget_ids):
             raise PolicyError("模型引用了无权修改的记忆")
         if kind == "cancel":
+            if not ids and re.search(r"全部取消|都不用找|都不想看|全都取消",event.text):
+                ids = list(known)
             for task_id in ids or ([tasks[0]["task_id"]] if tasks else []):
                 self.store.cancel_task(task_id)
                 task = self.store.task(task_id)
@@ -230,9 +244,10 @@ class SocialEngine:
             self.store.add_memory(person, "person", purpose, topic, event.event_id, now, kind="preference")
             self.store.set_setting(clock_key, event.occurred_at)
             return {"kind": "preference", "status": "saved"}
-        if self.routing and self.settings.platform not in self.providers:
+        route = self.request_route(event, person) if self.request_route else None
+        if not route and self.routing and self.settings.platform not in self.providers:
             raise PolicyError("当前未启用内容查找平台，视频委托尚不能执行")
-        binding = self.store.binding(person, self.settings.platform)
+        binding = self.store.binding(person, route["platform"] if route else self.settings.platform)
         if not binding or binding["purpose"] != "owner_video_recommendation":
             raise PolicyError("主人尚未绑定允许投递的目标账号")
         requested = result.get("not_before")
@@ -272,10 +287,12 @@ class SocialEngine:
             self.store.forget(memory_id)
         memory_id = self.store.add_memory(person, "person", purpose, topic, event.event_id, now,
                                           kind="request", valid_until=expiry)
-        self.store.add_task(person, topic, event.event_id, memory_id, now, due, expiry, binding["version"],
-                            target_platform=self.settings.platform, interval_days=interval, sensitive=sensitive)
+        task_id = self.store.add_task(person, topic, event.event_id, memory_id, now, due, expiry, binding["version"],
+                            target_platform=route["platform"] if route else self.settings.platform, interval_days=interval, sensitive=sensitive,
+                            **({"route":route} if route else {}))
         self.store.set_setting(clock_key, event.occurred_at)
-        return {"kind": kind, "status": "saved", "due_at": due, "expires_at": expiry}
+        return {"kind": kind, "status": "saved", "task_id":task_id, "due_at": due, "expires_at": expiry,
+                "delivery_platform":route["platform"] if route else self.settings.platform, "content_provider":route["provider"] if route else self.settings.platform}
 
     def _private_message(self, event: Event, person: str | None, now: float) -> None:
         access = self.private_access.get(event.platform)
@@ -300,11 +317,23 @@ class SocialEngine:
         context = self.memory_service.context(event,person,owner,now)
         if owner and self.owner_activity and event.platform == self.settings.platform:
             context.update(self.owner_activity.private_context(person,now))
+        visual_context = {}
+        if event.images:
+            service = self.private_visions.get(event.platform)
+            if service:
+                image_document = service.enrich(Document(ContentRef(event.platform,"private_images",event.event_id),
+                    "用户本轮私聊图片",event.text,"text",images=event.images),now)
+                visual_context = {"private_images": image_document.public_context()}
+            else:
+                visual_context = {"private_images": {"status":"unavailable", "note":"未配置图片理解，不能猜测图片内容"}}
         social = self.social.context(event=event,person=person,channel="private",now=now)
         result, options = self.message_decision("private_chat", {
             "persona": self.persona.prompt(owner, private=True), "message": event.text,
+            **visual_context, "max_reply_messages": event.reply_limit,
+            "reply_format": "可返回messages字符串数组，按顺序分条回复；每条独立完整，合计不超过max_characters",
             "owner_addressed": owner, **context, "social_context": social,
             "intent_result": intent, "browsing_enabled": self.settings.browsing_enabled,
+            "explicit_video_requests_enabled": bool(event.platform in self.private_policies and self.request_route and self.providers),
             "max_characters": self.settings.max_private_characters,
         }, event.platform, event.account_id, "private", now)
         if result.get("decision") == "skip":
@@ -313,7 +342,18 @@ class SocialEngine:
             return
         if result.get("decision") != "reply":
             raise PolicyError("私信回复决策类型无效")
-        text, emojis = self.message_text(result, options, self.settings.max_private_characters)
+        parts = result.get("messages") if event.reply_limit > 1 else None
+        if parts is not None:
+            if not isinstance(parts,list) or not 1<=len(parts)<=event.reply_limit or any(not isinstance(t,str) or not t.strip() for t in parts):
+                raise PolicyError("分条私聊回复格式无效")
+            joined = "\n".join(parts)
+            raw_body = result.get("text", joined)
+            if not isinstance(raw_body,str) or raw_body.strip() != joined or result.get("emojis", []):
+                raise PolicyError("分条回复与完整审核正文不一致")
+            result = {**result,"text":joined,"emojis":[]}
+            options = ()
+        text, emojis = self.message_text(result, options, self.settings.max_private_characters,
+            multilingual=self.private_policies.get(event.platform,{}).get("multilingual",False))
         if owner:
             current = self.store.binding(person, event.platform)
             if not binding or not current or current["version"] != binding["version"]:
@@ -331,7 +371,12 @@ class SocialEngine:
                         owner_activity_sources=context.get("owner_activity_sources",()),
                         social_refs=refs, social_followups=self.social.followups(result,social,captured),
                         social_version=self.settings.social.version(),social_gap_seconds=self.settings.social.followup_gap_minutes*60)
-        self.enqueue_generated(action,result,now)
+        if parts:
+            for i,part in enumerate(parts):
+                self.enqueue_generated(replace(action,action_id=stable_id(action.action_id,i),text=part,
+                    emojis=(),dedup_key=stable_id(event.event_id,i)),{**result,"text":part},now)
+        else:
+            self.enqueue_generated(action,result,now)
 
     def _reply(self, event: Event, person: str | None, now: float) -> None:
         owner = person == self.settings.owner_person_id
@@ -468,25 +513,29 @@ class SocialEngine:
     def run_due_task(self, now: float | None = None) -> bool:
         live_clock = now is None
         now = time.time() if now is None else now
-        if self.paused(self.settings.platform) or not self.settings.browsing_enabled:
+        if self.paused(self.settings.platform) or (not self.settings.browsing_enabled and not self.request_route):
             return False
         if next_window(now, self.settings.timezone, self.settings.windows, self.settings.weekdays) > now:
             return False
-        task = self.store.claim_task(now)
+        task = self.store.claim_task(now, **({"routed_only":not self.settings.browsing_enabled,
+            "available_providers":tuple(self.providers),
+            "available_targets":tuple(p for p,a in self.routing()) if self.routing else None} if self.request_route else {}))
         if task is None:
             return False
         if task["attempts"] > self.settings.max_task_attempts:
             self.store.defer_task(task["task_id"], now, "已达到委托查找次数上限", exhausted=True)
             return True
         try:
-            if task["sensitive"]:
+            private_topics = self.unfiltered_private_task(task)
+            if task["sensitive"] and not private_topics:
                 self.store.defer_task(task["task_id"], now, "主题不适合公开提及；请在本地管理任务", exhausted=True)
                 return True
             binding = self.store.binding(task["person_id"], task["target_platform"])
             if not binding or binding["version"] != task["binding_version"]:
                 self.store.cancel_task(task["task_id"])
                 return True
-            provider = self.providers[task["target_platform"]]
+            provider_name = task.get("route",{}).get("provider",task["target_platform"])
+            provider = self.private_content_providers.get(provider_name,self.providers[provider_name]) if private_topics else self.providers[provider_name]
             refs = provider.search(task["topic"], self.settings.categories, self.settings.candidate_limit)
             for ref in refs[:self.settings.videos_per_round]:
                 moment = time.time() if live_clock else now
@@ -497,9 +546,9 @@ class SocialEngine:
                 if self.paused(self.settings.platform):
                     self.store.defer_task(task["task_id"], moment + 60, "已暂停")
                     return True
-                if self.store.has_action_for_content(ref.key, now):
+                if task.get("route",{}).get("mode")!="private" and self.store.has_action_for_content(ref.key, now):
                     continue
-                document = self.document(ref, now)
+                document = self.document(ref, now, private=private_topics)
                 if not self.can_evaluate(document):
                     self.store.record_view(ref, "缺少可验证的正文/字幕，未生成推荐", now)
                     continue
@@ -554,13 +603,21 @@ class SocialEngine:
             self.store.release_lease("browse")
         return count
 
+    def unfiltered_private_task(self, task):
+        route = task.get("route",{}) if task else {}
+        return route.get("mode")=="private" and self.private_policies.get(route.get("platform"),{}).get("topic_filter") is False
+
     def _evaluate(self, document: Document, now: float, task: dict | None = None, *, owner_observation=None) -> bool:
+        if self.unfiltered_private_task(task):
+            return self._private_task_result(document,task,now)
         binding = self.store.binding(self.settings.owner_person_id, document.ref.provider)
         owner = bool(binding and document.author_id == binding["external_id"])
         local = document_topic(document)
         if blocked(local,owner):
             self.store.record_view(document.ref,"话题限制：跳过严肃或敏感内容",now)
             return False
+        if task and task.get("route",{}).get("mode")=="private":
+            return self._private_task_result(document, task, now)
         # This payload is deliberately independent of the original private message.
         # Capture before preferences are read, so concurrent forgetting/correction
         # invalidates the whole decision, not just the eventual recommendation.
@@ -590,7 +647,7 @@ class SocialEngine:
         self.store.record_view(document.ref, reason or decision, now)
         if owner_observation and decision not in {"recommend","skip"}:
             return False
-        if not owner_observation:
+        if not owner_observation and not (task and task.get("route")):
             self._queue_reactions(document, now, result.get("interested") is True,memory_epoch=result["_memory_epoch"])
         extra = result.get("comment_reply")
         if not owner_observation and task is None and decision != "reply" and self.settings.reply_comments and isinstance(extra, dict) and extra.get("reply_to"):
@@ -630,6 +687,46 @@ class SocialEngine:
         )
         if owner_observation and self.owner_activity and self.owner_activity.guard(action,now):
             return False
+        return self.enqueue_generated(action,result,now)
+
+    def _private_task_result(self, document, task, now):
+        route = task["route"]
+        binding = self.store.binding(task["person_id"],route["platform"])
+        accounts = dict(self.routing()) if self.routing else {self.settings.platform:self.settings.account_id}
+        account = accounts.get(route["platform"])
+        access = self.private_access.get(route["platform"])
+        if (not binding or binding["version"]!=route["binding_version"] or not account or not access
+                or not access.allows_private_reply(account,binding["external_id"])):
+            raise PolicyError("委托结果的私聊权限或机器人账号不可用")
+        if route.get("account_id") and route["account_id"]!=account:
+            raise PolicyError("委托结果的机器人账号已变化")
+        url = self.content_urls.get(document.ref.provider,lambda ref:document.url)(document.ref)
+        if not url:
+            raise PolicyError("未取得可信的视频链接")
+        epoch = self.store.get_setting("memory_epoch",0)
+        result, options = self.message_decision("private_task_result", {
+            "persona":self.persona.prompt(True,private=True),"content":document.public_context(),
+            "video_url":url,"requested_topic":task["topic"],"memory_epoch":epoch,
+            "max_characters":self.settings.max_private_characters},route["platform"],account,"private",now)
+        if result.get("decision")=="skip":
+            return False
+        if result.get("decision")!="recommend":
+            raise PolicyError("视频推荐判断无效")
+        text = result.get("text")
+        if (not isinstance(text,str) or len(text)>self.settings.max_private_characters
+                or text.count(url)!=1 or result.get("emojis",[])):
+            raise PolicyError("推荐正文必须且只能包含选定视频的可信链接，不附加表情")
+        checked_text(text.replace(url,""),self.settings.max_private_characters,
+            multilingual=self.private_policies.get(route["platform"],{}).get("multilingual",False))
+        text,emojis = text.strip(), ()
+        action=Action(stable_id(task["task_id"],task["version"],document.ref.key,task["attempts"]),
+            self.settings.agent_id,route["platform"],account,document.ref,text,now,
+            min(task["expires_at"],now+self.settings.action_ttl_minutes*60),kind="task_result",
+            event_id=task["event_id"],task_id=task["task_id"],task_version=task["version"],
+            binding_version=binding["version"],subject_person_id=task["person_id"],
+            recipient_id=binding["external_id"],conversation_id=route["conversation_id"],visibility="private",
+            memory_epoch=result["_memory_epoch"],evidence_level=document.evidence_level,emojis=emojis,
+            dedup_key=stable_id("task-result",task["task_id"],task["version"],document.ref.key))
         return self.enqueue_generated(action,result,now)
 
     def _queue_browse_reply(self, document, result, options, now, *, memory_epoch: int):
@@ -676,6 +773,7 @@ class SocialEngine:
                                          manual_only=self.settings.draft, require_review=self.settings.model_review and pre_reviewed_only,
                                          required_review_method=self.settings.review_strategy if self.settings.model_review and pre_reviewed_only else "",
                                          autonomous_kinds=self.autonomy.allowed_kinds(now),
+                                         task_window_open=next_window(now,self.settings.timezone,self.settings.windows,self.settings.weekdays)==now,
                                          **({"routes": self.routing()} if self.routing else {}))
         if action is None:
             return False
@@ -697,7 +795,7 @@ class SocialEngine:
             self.store.finish_action(action.action_id, Receipt("failed", detail="目标平台尚未接入"), now)
             return True
         try:
-            if action.kind in {"private_reply", "proactive_private"}:
+            if action.kind in {"private_reply", "proactive_private", "task_result"}:
                 access = self.private_access.get(action.platform)
                 if access is None or not access.allows_private_reply(action.account_id, action.recipient_id):
                     self.store.finish_action(action.action_id, Receipt("failed", detail="发送前不满足私信回复关系限制"), now)
@@ -710,16 +808,24 @@ class SocialEngine:
                 if reviewed is None:
                     return True
                 action = reviewed
+            input_waiting = False
             def before_write():
+                nonlocal input_waiting
+                if action.task_id and self.store.task_input_pending(action):
+                    input_waiting = True
+                    return False
                 moment = time.time() if live_clock else now
                 local_ok = not self.store.validate_action(action, moment) and not self.paused(action.platform) and not self.action_policy(action, moment) and not self.autonomy.guard(action, moment) and not self.social.guard(action,moment)
                 if not local_ok:
                     return False
-                if action.kind in {"private_reply", "proactive_private"}:
+                if action.kind in {"private_reply", "proactive_private", "task_result"}:
                     access = self.private_access.get(action.platform)
                     return access is not None and access.allows_private_reply(action.account_id, action.recipient_id)
                 return True
             receipt = sink.send(action, mentions, before_write=before_write)
+            if input_waiting and receipt.state=="failed":
+                self.store.defer_action(action.action_id,now+1,"主人有新消息，等待处理后再投递委托结果")
+                return True
         except PlatformError as exc:
             if exc.pause:
                 self.pause_platform(exc, action.platform)
@@ -752,7 +858,8 @@ class SocialEngine:
             result = self.model.decide("review_action", {
                 "persona": self.persona.prompt(owner, private=action.visibility == "private"), "proposed_text": action.text,
                 "channel": "private" if action.visibility == "private" else "public", "action_kind": action.kind,
-                "owner_addressed": owner, "source_message": event.text if event else None,
+                "private_policy":dict(self.private_policies.get(action.platform,{})) if action.visibility=="private" else {},
+                "owner_addressed": owner, "source_message": event.text if event and (event.visibility != "private" or action.visibility == "private") else None,
                 "owner_activity": (self.owner_activity.review_context(action,now)
                                    if action.visibility == "private" and action.owner_activity_version and self.owner_activity else None),
                 "content": document.public_context() if document else None,

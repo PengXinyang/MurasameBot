@@ -19,6 +19,7 @@ from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.platforms import build_modules, close_resources, module_resources, prepare_platform_state
 from murasamebot.domain.models import Action, PlatformError, stable_id
 from murasamebot.domain.topics import blocked, document_topic, local_topic
+from murasamebot.application.scheduling import next_window
 from murasamebot.application.request_policy import RequestSettings
 
 
@@ -123,9 +124,8 @@ class Runtime:
         if primary and {"autonomous_post", "proactive_private"} & primary.capabilities:
             self.engine.autonomy.run(now)
         if primary and "exploration" in primary.capabilities:
-            if self.engine.settings.platform in self.engine.providers:
-                if not self.engine.run_due_task():
-                    self.engine.browse()
+            if not self.engine.run_due_task():
+                self.engine.browse()
         self.run_artwork(now)
         return False
 
@@ -253,6 +253,9 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                 return "表情设置已变化，请重新生成或取消此草稿"
             if any(e.kind=="kaomoji" for e in action.emojis) and not current.data.get("expressions",{}).get("kaomoji_enabled",True):
                 return "颜文字已关闭，请重新生成或取消此草稿"
+            if action.task_id and (task := store.task(action.task_id)) and task.get("route"):
+                if next_window(now,current.data["timezone"],tuple((w["start"],w["end"]) for w in current.data["browsing"]["windows"]),tuple(current.data["browsing"]["weekdays"])) != now:
+                    return "委托投递不在配置时段"
             if action.kind == "artwork_share":
                 art = ArtSettings.from_config(current.data.get("artwork", {}))
                 if not art.enabled or art.delivery != action.artwork.get("delivery"):
@@ -281,6 +284,19 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
             enabled = Config(config.path).enabled_platforms
             return tuple((name, module.account_id) for name, module in modules.items() if name in enabled)
         engine.routing = active_routes
+        from murasamebot.application.task_routing import owner_video_route
+        engine.request_route = lambda event,person: owner_video_route(store,event,person,provider="bilibili",
+            private_platform="qq",public_platform="bilibili",accounts=dict(active_routes())) if event.platform=="qq" else None
+        engine.content_urls["bilibili"] = lambda ref: "https://www.bilibili.com/video/av"+ref.external_id if ref.kind=="video" and ref.external_id.isdigit() else ""
+
+        engine.memory_service.shared_owner_private = "qq" in modules
+        engine.private_policies = {name:dict(module.private_policy) for name,module in modules.items() if module.private_policy}
+        engine.private_content_providers = {name:module.private_content_provider for name,module in modules.items() if module.private_content_provider}
+        for name, module in modules.items():
+            if getattr(module, "private_image_reader", None):
+                engine.private_visions[name] = VisionService(vision_settings, module.private_image_reader,
+                    vision_model, store, model_name=v.get("name") or m["name"])
+
         for module in modules.values():
             if module.artwork:
                 module.artwork.model, module.artwork.persona = model, persona
@@ -315,7 +331,7 @@ def readiness(runtime: Runtime) -> dict:
         "proxy_mode": runtime.config.data["network"]["proxy_mode"],
         "proxy_rules": rules_for(runtime.config.network_proxy).status(),
         "artwork_enabled": bool(runtime.artwork and runtime.artwork.settings.enabled),
-        "private_messages_enabled": primary.get("private_messages_enabled", False),
+        "private_messages_enabled": primary.get("private_messages_enabled", runtime.engine.settings.private_messages_enabled),
         "private_reply_policy": primary.get("private_reply_policy", "unavailable"),
         "reply_poll_seconds": primary.get("reply_poll_seconds", 15),
         "owner_poll_seconds": primary.get("owner_poll_seconds", 0),

@@ -42,6 +42,8 @@ class Event:
     actor_name: str = ""
     share_content: ContentRef | None = None
     sequence: int = 0
+    images: tuple[ImageRef, ...] = ()
+    reply_limit: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -49,6 +51,7 @@ class Event:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Event:
         data = dict(data)
+        data["images"] = tuple(ImageRef(**i) if isinstance(i, dict) else i for i in data.get("images", ()))
         if isinstance(data.get("content"), dict):
             data["content"] = ContentRef(**data["content"])
         if isinstance(data.get("share_content"), dict):

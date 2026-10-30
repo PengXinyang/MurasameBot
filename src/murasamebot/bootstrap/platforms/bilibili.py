@@ -187,6 +187,7 @@ class BilibiliModule(PlatformModule):
 
 
 def build_module(config, store):
+    from murasamebot.adapters.platforms.bilibili_private_content import PrivateVideoProvider
     from murasamebot.adapters.platforms.bilibili import BilibiliAdapter
     from murasamebot.adapters.artwork.sources import PixivSource, XSource
     from murasamebot.adapters.request_monitor import RequestMonitor
@@ -214,4 +215,5 @@ def build_module(config, store):
         sources[source] = PixivSource(a.get("pixiv_session", ""), proxy_url=config.network_proxy) if source == "pixiv" else XSource(a.get("x_bearer_token", ""), proxy_url=config.network_proxy)
     artwork = ArtDiscovery(ArtSettings.from_config(a), sources, store, None, None)
     return BilibiliModule("bilibili", platform, CAPABILITIES, (history_reader,), history,
-                          history_reader, artwork, monitor, b["reply_poll_seconds"])
+                          history_reader, artwork, monitor, b["reply_poll_seconds"],
+                          private_content_provider=PrivateVideoProvider(platform))

@@ -1,6 +1,6 @@
 # 当前架构
 
-实现核对日期：2026-10-30；原B站功能快照为2026-10-29，本轮实现Q0平台解耦。QQ、微信、X发布和视频投稿不是现有集成。早期多级目录图是目标设计，实际结构以本页及[平台模块说明](PLATFORM_MODULES.md)为准。
+实现核对日期：2026-10-30；已完成Q0平台解耦及Q1主人QQ文字/图片私聊代码，Q1使用独立OneBot HTTP适配器、签名事件接收器、持久chat_inbox缓冲，复用MemoryService/VisionService及outbox。QQ网关尚未安装，QQ保持关闭，未实号验收。微信、X发布和视频投稿未接入。早期多级目录图是目标设计，实际结构见[平台模块说明](PLATFORM_MODULES.md)与[QQ私聊](QQ_PRIVATE_CHAT.md)。
 
 ## QQ接入与模块化方向（2026-10-30，Q0已编码）
 
@@ -11,6 +11,8 @@
 为保护B站实现，本轮不移动`adapters/platforms/bilibili*.py`，也不改其协议代码。功能与完整目标目录见[QQ方案](QQ_INTEGRATION.md)，当前实现见[平台模块说明](PLATFORM_MODULES.md)，决策见D30/D31。下文原有B站业务流程继续有效。
 
 ## 技术栈与运行方式
+
+2026-10-30 Q2新增：`application/task_routing.py`通过程序规则选择受绑定约束的投递渠道；`task_routes`附加表与原tasks事务关联，分别保存内容来源与投递账号/模式。QQ结果使用`task_result`进入同一outbox，B站提及使用原recommendation；取消和新QQ输入等待在领取及最终写入前检查。独立公开审核不接收私人委托原文。旧任务不重放；实际QQ仍关闭。详见[QQ/B站任务](QQ_BILIBILI_TASKS.md)。
 
 | 层面 | 当前选择 | 代码依据 |
 | --- | --- | --- |
@@ -114,3 +116,5 @@ SQLite保存`bindings`、`events`、`tasks`、`actions`、内容缓存、浏览�
 `SocialEngine`把程序筛选的`social_context`提供给原回复调用，同次可返回`social_update`。`SocialService`校验精确来源摘录、身份、可见性和可选澄清ID；`SQLiteSocial`在`social_events/role_states`中保存归因与短期反应，独立于事实/偏好/日记。动态正文/相关父评论、真实视觉和授权观看可作来源；观看依赖沿用原授权/记录ID，第三方私聊保持同人同会话隔离。
 
 `AutonomyService`在原后台通道选择到期角色状态，决定私信/动态或skip，保存原Action中的`social_refs/social_followups/social_version`，不新增轮询或发送器。公开来源可提供摘录，主人私人来源只提供感受标签和限制；独立审核也不接收原私密来源。源、状态及配置在生成后/入队/领取/最终写入前核验；平台受理才增加累计提起次数。管理台独立“心情与线索”页面通过鉴权`/api/social`及仅结束/遗忘的`/api/social/manage`管理，操作不直接发平台消息。详见[社交状态](SOCIAL_STATES.md)。
+
+QQ私人渠道策略由模块装配到共享内核（多语言/关闭公开话题筛选），私有视频读取通过`PrivateVideoProvider`包装同一B站协议适配器；公开入口默认仍筛选话题。任务路由决定使用哪个入口，QQ适配器不直接调用B站适配器，绑定/记忆/审核/outbox仍共用。

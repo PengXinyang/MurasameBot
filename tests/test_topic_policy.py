@@ -72,6 +72,31 @@ def test_political_search_and_metadata_do_not_read_comments_or_subtitles(tmp_pat
     assert calls==["/x/web-interface/newlist","/x/web-interface/view"]
 
 
+def test_private_video_provider_reads_sensitive_search_and_subtitles_without_changing_public_defaults(tmp_path):
+    from murasamebot.adapters.platforms.bilibili_private_content import PrivateVideoProvider
+    p=BilibiliAdapter(credentials(tmp_path),video_frames_enabled=False)
+    calls=[]
+    def request(path,**kwargs):
+        calls.append(path)
+        if path.endswith('search/type'):
+            return {"result":[{"aid":42,"title":"政治分析","description":"资料"}]},None
+        return {"title":"政治分析","desc":"资料","bvid":"BVexample","pages":[{"cid":12}]},None
+    p._request=request
+    p._subtitle=lambda *args:"实际可得字幕"
+    p._comments=lambda *args:()
+    private=PrivateVideoProvider(p)
+    try:
+        assert p.search("政治分析",[],3)==[] and not calls
+        refs=private.search("政治分析",[],3)
+        assert len(refs)==1
+        document=private.read(refs[0])
+        assert document.evidence_level=="transcript" and "实际可得字幕" in document.text
+        public=p.read(refs[0])
+        assert public.topic_class=="sensitive" and public.evidence_level=="metadata"
+        assert p.search("政治分析",[],3)==[]
+    finally:p.close()
+
+
 @pytest.mark.parametrize("grade",["sensitive","unknown"])
 def test_final_policy_rejects_legacy_and_manually_approved_actions(tmp_path,grade):
     runtime=build(Config(write_config(tmp_path)))

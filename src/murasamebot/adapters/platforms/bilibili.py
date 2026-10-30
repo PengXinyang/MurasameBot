@@ -416,7 +416,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                 continue
         return ""
 
-    def read(self, ref: ContentRef, *, reply_to="", root="", context: ContentRef | None = None) -> Document:
+    def read(self, ref: ContentRef, *, reply_to="", root="", context: ContentRef | None = None, topic_filter=True) -> Document:
         if ref.provider != "bilibili" or ref.kind not in set(COMMENT_TYPES) | {"post"}:
             raise PlatformError("不支持的内容引用")
         oid = numeric(ref.external_id)
@@ -424,7 +424,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         if ref.kind == "video":
             data, _ = self._request("/x/web-interface/view", params={"aid": oid})
             bvid = str(data.get("bvid", ""))
-            if local_topic(plain(data.get("title")),data.get("desc"),data.get("tname")) == "sensitive":
+            if topic_filter and local_topic(plain(data.get("title")),data.get("desc"),data.get("tname")) == "sensitive":
                 return Document(ref,plain(data.get("title")),str(data.get("desc") or "")[:3000],"metadata",
                                 author_id=str((data.get("owner") or {}).get("mid", "")),
                                 category_id=str(data.get("tid", "")),topic_class="sensitive")
@@ -448,7 +448,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             body = ("视频简介：\n" + description + "\n取得的字幕（最多前3个分P，可能不完整）：\n" + transcript) if transcript else description
             title, author, category = plain(data.get("title")), str((data.get("owner") or {}).get("mid", "")), str(data.get("tid", ""))
             url = "https://www.bilibili.com/video/" + bvid
-            if self.video_frames_enabled and local_topic(title, body) != "sensitive":
+            if self.video_frames_enabled and (not topic_filter or local_topic(title, body) != "sensitive"):
                 frame_images, frame_context = self.video_frames.read(data)
         else:
             if ref.kind in {"dynamic", "post", "draw"}:
@@ -520,8 +520,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                     refs[ref.key] = ref
         return list(refs.values())[:limit]
 
-    def search(self, query: str, category_ids: Sequence[str], limit: int) -> list[ContentRef]:
-        if local_topic(query) == "sensitive":
+    def search(self, query: str, category_ids: Sequence[str], limit: int, *, topic_filter=True) -> list[ContentRef]:
+        if topic_filter and local_topic(query) == "sensitive":
             return []
         refs = {}
         for category in list(category_ids) or ["0"]:
@@ -530,7 +530,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                 "page_size": min(limit, 20), "order": "totalrank",
             })
             for row in data.get("result") or []:
-                if local_topic(plain(row.get("title")),row.get("description"),row.get("typename")) == "sensitive":
+                if topic_filter and local_topic(plain(row.get("title")),row.get("description"),row.get("typename")) == "sensitive":
                     continue
                 aid = str(row.get("aid") or "")
                 if aid.isdigit():

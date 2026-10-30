@@ -73,6 +73,8 @@ def parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="打开本机管理台服务")
     serve.add_argument("--with-worker", action="store_true", help="同时启动已配置的工作循环")
     sub.add_parser("login", help="扫码登录；凭证只写入本地 .secrets")
+    sub.add_parser("qq-check", help="只读核验QQ机器人账号和主人好友关系，不发送消息")
+    sub.add_parser("qq-listen", help="启动本机OneBot签名事件回调接收器")
     sub.add_parser("categories", help="显示适配器分区参考 ID")
     sub.add_parser("config", help="显示不含密钥的实际配置")
     check = sub.add_parser("comment-check", help="只读核查已受理评论的状态，不发布或重发")
@@ -111,6 +113,19 @@ def main(argv=None):
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         config = Config(args.config)
+        if args.command == "qq-check":
+            from murasamebot.adapters.platforms.qq import QQAdapter
+            adapter = QQAdapter(config.data["qq"],prepare_store(config),config.data["owner_person_id"])
+            try:
+                binding = adapter.store.binding(config.data["owner_person_id"],"qq")
+                show({"account_matches":bool(adapter.account()),"owner_is_friend":bool(binding and adapter.allows_private_reply(adapter.account_id,binding["external_id"])),"sent":False})
+            finally:
+                adapter.close()
+            return
+        if args.command == "qq-listen":
+            from murasamebot.bootstrap.qq_receiver import serve
+            serve(config.path)
+            return
         if args.command == "proxy-rules":
             from murasamebot.adapters.network import rules_for
             policy = config.network_proxy
