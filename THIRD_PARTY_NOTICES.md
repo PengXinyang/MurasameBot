@@ -1,5 +1,7 @@
 # Reference and dependency notices
 
+Prompt-style research (2026-10-31) consulted op7418/Humanizer-zh, blader/humanizer and hardikpandya/stop-slop (MIT), plus LingChat at ef8f79141f724fee1f0c78fc863b63bc2be42126 (AGPL-3.0). No upstream source or full prompt/skill templates were vendored. The project retains its own scoped persona, structured review and delivery protocols; sources, limits and independently written style changes are described in [the research note](docs/PERSONA_PROMPT_RESEARCH.md).
+
 MurasameBot's Python implementation was written for this project. No source files from an existing bot framework were vendored. Platform endpoint information and concepts were checked against these public projects on 2026-10-26:
 
 - https://github.com/chenluQwQ/bilibili-ai-bot — MIT; account-login, notification and proactive-interaction references.

@@ -13,6 +13,7 @@
 | [RUNTIME_MEMORY.md](RUNTIME_MEMORY.md) | 用户记忆/委托/观察的区别、持久化、遗忘及尚存缺口 |
 | [DASHBOARD_MODULES.md](DASHBOARD_MODULES.md) | QQ/B站平台管理页、任务归属、共同设置及QQ/B站共同记忆/日记/相处回顾 |
 | [SOCIAL_STATES.md](SOCIAL_STATES.md) | 带来源社交记录、短期角色状态、公开感受、跟进与管理 |
+| [PERSONA_PROMPT_RESEARCH.md](PERSONA_PROMPT_RESEARCH.md) | 去套话skill核验、LingChat提示词/历史链路、本轮普通聊天风格规则及后续对照验收 |
 | [VIDEO_VISION.md](VIDEO_VISION.md) | 视频快照配置、裁图/时间映射、视觉证据及降级边界 |
 | [VIDEO_UNDERSTANDING_PLAN.md](VIDEO_UNDERSTANDING_PLAN.md) | 视频理解规划（未开发）：分镜总览、高清细看、分析资产、上游分支对比、阶段与验收 |
 | [ROADMAP.md](ROADMAP.md) | 跨平台、Docker、语音与视频投稿等尚未实现的范围 |

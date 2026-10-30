@@ -12,6 +12,8 @@
 
 ## 技术栈与运行方式
 
+2026-10-31表达层补充：正文操作在原ChatCompletionsModel内共用简短风格/普通聊天连贯规则，同次生成和审核路径不变，不新增润色请求或运行时skill依赖。text_profile的语言服从当前渠道策略，设置源与私密范围保留；研究结论、未开发阶段及自然度验收见[提示词专题](PERSONA_PROMPT_RESEARCH.md)与D40。
+
 2026-10-30 Q2新增：`application/task_routing.py`通过程序规则选择受绑定约束的投递渠道；`task_routes`附加表与原tasks事务关联，分别保存内容来源与投递账号/模式。QQ结果使用`task_result`进入同一outbox，B站提及使用原recommendation；取消和新QQ输入等待在领取及最终写入前检查。独立公开审核不接收私人委托原文。旧任务不重放；实际QQ仍关闭。详见[QQ/B站任务](QQ_BILIBILI_TASKS.md)。
 
 | 层面 | 当前选择 | 代码依据 |
