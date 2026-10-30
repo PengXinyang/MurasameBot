@@ -19,7 +19,7 @@ from PIL import Image
 from murasamebot.adapters.network import client as network_client
 from murasamebot.adapters.platforms.bilibili_private import BilibiliPrivateMixin
 from murasamebot.adapters.platforms.bilibili_comments import read_comment_chain
-from murasamebot.adapters.platforms.bilibili_frames import VideoShotReader
+from murasamebot.adapters.platforms.bilibili_frames import VideoShotReader, fetch_preview_index
 from murasamebot.adapters.platforms.bilibili_emojis import BilibiliEmojiMixin
 from murasamebot.adapters.platforms.bilibili_publication import BilibiliPublicationMixin, classify_comment
 
@@ -98,7 +98,8 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         self._account: dict | None = None
         self.video_frames_enabled = video_frames_enabled
         self.video_frames = VideoShotReader(self._request, count=video_frame_count, max_parts=video_frame_max_parts,
-                                            cache_minutes=frame_cache_minutes, retry_minutes=frame_retry_minutes)
+                                            cache_minutes=frame_cache_minutes, retry_minutes=frame_retry_minutes,
+                                            index_reader=lambda url: fetch_preview_index(url, proxy_url=self.proxy_url))
 
     def warn_inbox(self, source: str, detail: str):
         self.poll_warnings.append({"source": source, "detail": detail})

@@ -44,6 +44,14 @@ SQLite内容缓存保存裁图引用、时间、覆盖和视觉文字，不保�
 
 ## 参考与未包含功能
 
+### 2026-10-30：空时间表兼容与有限回退
+
+用户报告三条公开视频无预览画面。无Cookie公开GET实测发现：有些响应`image`非空但`index=[]`，同视频BV/AV参数请求结果也会不同；这不能直接解释为视频没有拼图。修复后对这三条视频均取得6帧，并实际下载/裁出每帧480×270像素；没有调用视觉模型或执行社交写入。接口内容会变化，这不是所有视频均有快照的保证。
+
+当前顺序：BV+cid+index=1 → 该响应提供的`pvdata`时间表 → 同aid+cid+index=1及其时间表 → 仅第1P的`/pvideo`。一旦取得有效帧即停止，不拼接不同响应的时间表与拼图、不把P1兜底用于其他P。`pvdata`按文档的大端uint16解码，严格去除头项，检查长度/单调性；CDN请求不带Cookie/Authorization、不跟随重定向，仅允许明确的hdslb主机且最多20002字节，不猜帧时间。认证/风控/限流/静默仍传播，禁止以回退绕过限制；全部缺失继续文字降级并沿用10分钟失败缓存。日志区分无拼图、缺时间表和接口不可用。
+
+真实pvdata额外使用`boss.hdslb.com`，已精确加入二进制读取白名单（不扩大图片白名单）；94字节真实时间表解析得46个时间点，最终一次空JSON索引的视频已直接由该路径恢复6帧。旧`/pvideo`本次公开探测未返回可解析JSON，仅保留一次有界兼容尝试，不能承诺可用。APP的`/x/v2/view/video/shot`需要APP鉴权，未用网页扫码凭证冒充APP客户端。部分DSH项目走下载+FFmpeg或远程视频流抽帧；本轮保留原有不下载完整视频、不增加FFmpeg依赖的约束。协议细节见下方快照文档（包含另两种接口及二进制示例）。
+
 - [dsh-bili-summary](https://github.com/YZz-S/dsh-bili-summary/blob/81b7a0e2991e311b74de22b5414dcdbdac5648aa/bili-summary.js)：参考播放器快照、拼图裁切和缺失降级的设计。这里独立使用Python/Pillow实现，未引入Node、sharp或DSH运行时，未复制其实现源码。
 - [视频快照接口说明](https://github.com/realysy/bili-apis/blob/master/docs/video/snapshot.md)：返回字段、时间表与拼图排列的社区协议依据，不是B站稳定性承诺。
 - [dsh-bili-whale](https://github.com/Alterssss/dsh-bili-whale/blob/8b0009f8ce2ebdc421afcb2e727b19ac18912ec6/tools/commands/bili-watch.mjs)：参考时间覆盖的思路；本次未采用先下载整段视频再检测场景的路径。
