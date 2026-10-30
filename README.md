@@ -80,11 +80,13 @@ Cookie 失效时程序暂停相应出站；重新扫码并 `resume`。首版没�
 
 ## 管理台与工作循环
 
+管理台已内置`ReceiverManager`：在“运行概况 → 平台服务”分别启动QQ/B站，QQ签名回调随管理台托管，不需要额外`qq-listen`进程。NapCat仍需保持运行。切换前停止原独立worker/接收器；运行状态、自动启动和扩展边界见[平台服务说明](docs/PLATFORM_SERVICES.md)。
+
 ```powershell
-# 仅管理台：不会启动平台轮询、模型调用或发布
+# 先开管理台，再在页面分别启动QQ/B站
 .\.venv\Scripts\python.exe run.py serve
 
-# 填好模型、登录后，启动管理台与工作循环
+# 填好模型、登录后，自动启动配置中开启的平台与唯一工作循环
 .\.venv\Scripts\python.exe run.py serve --with-worker
 
 # 也可以仅运行后台工作循环

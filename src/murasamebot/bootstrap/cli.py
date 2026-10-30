@@ -21,7 +21,13 @@ def show(value):
     print(json.dumps(value, ensure_ascii=False, indent=2))
 
 
-def worker_loop(config_path: Path, stop: StopEvent, *, once=False):
+def worker_loop(config_path: Path, stop: StopEvent, *, once=False, config_loader=Config):
+    from murasamebot.bootstrap.worker_lock import WorkerLock
+    with WorkerLock(Config(config_path)):
+        _worker_loop(config_path, stop, once=once, config_loader=config_loader)
+
+
+def _worker_loop(config_path: Path, stop: StopEvent, *, once=False, config_loader=Config):
     import os
     prepare_store(Config(config_path)).audit("worker_started",f"工作循环启动 pid={os.getpid()}",time.time())
     if once:
@@ -33,11 +39,19 @@ def worker_loop(config_path: Path, stop: StopEvent, *, once=False):
             runtime.close()
         return
     from murasamebot.bootstrap.workers import WorkerCoordinator
-    coordinator = WorkerCoordinator(config_path)
+    coordinator = WorkerCoordinator(config_path, config_loader=config_loader)
     next_poll = 0.0
+    platforms = None
     try:
         while not stop.is_set():
-            config = Config(config_path)
+            config = config_loader(config_path)
+            if config.enabled_platforms != platforms:
+                platforms = config.enabled_platforms
+                next_poll = 0.0
+            if not config.enabled_platforms:
+                stop.wait(1)
+                next_poll = 0.0
+                continue
             if time.monotonic() >= next_poll:
                 started = time.monotonic()
                 runtime = build(config)
@@ -71,7 +85,7 @@ def parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="启动工作循环")
     run.add_argument("--once", action="store_true")
     serve = sub.add_parser("serve", help="打开本机管理台服务")
-    serve.add_argument("--with-worker", action="store_true", help="同时启动已配置的工作循环")
+    serve.add_argument("--with-worker", action="store_true", help="自动启动配置中启用的平台接收服务及唯一工作循环")
     sub.add_parser("login", help="扫码登录；凭证只写入本地 .secrets")
     sub.add_parser("qq-check", help="只读核验QQ机器人账号和主人好友关系，不发送消息")
     sub.add_parser("qq-listen", help="启动本机OneBot签名事件回调接收器")

@@ -14,7 +14,7 @@ async function saveQQSettings() {
     await api('config', {qq, platforms: {qq: {enabled: document.querySelector('#qq-enabled').value === 'true'}}});
     await loadConfig();
     await refresh();
-    notice('QQ设置已保存。启用模块仍需运行事件接收器与工作循环。');
+    notice('QQ设置已保存，管理台已同步模块启停状态；NapCat需保持运行。');
   } catch (e) { notice(e.message, true); }
 }
 

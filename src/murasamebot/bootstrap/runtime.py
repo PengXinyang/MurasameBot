@@ -166,6 +166,7 @@ class Runtime:
 
 
 def build(config: Config, *, concurrency=None, platform_factories=None) -> Runtime:
+    reload_config = getattr(config, "runtime_reload", lambda: Config(config.path))
     store = prepare_store(config)
     modules = build_modules(config, store, platform_factories)
     model, resources = None, []
@@ -206,7 +207,7 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                         cache_minutes=e.get("cache_minutes", 360), preferred_keywords=tuple(e.get("preferred_keywords", ["千恋万花", "丛雨"])),
                         kaomoji_enabled=e.get("kaomoji_enabled",True)), {name: module.adapter for name, module in modules.items() if "emoji" in module.capabilities}, store)
         def action_policy(action: Action, now: float) -> str:
-            current = Config(config.path)
+            current = reload_config()
             module = modules.get(action.platform)
             if module is None or action.platform not in current.enabled_platforms:
                 return "目标平台未启用或尚未接入"
@@ -289,9 +290,9 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                                private_access={name: module.adapter for name, module in modules.items() if "private_reply" in module.capabilities}, vision=vision, expressions=expressions, owner_activity=history,
                                memory=MemoryService(store,model,MemorySettings(**config.data.get("memory",{})),timezone=config.data["timezone"],
                                                     observations=history,persona=persona.prompt(True,private=True),
-                                                    observation_guard=lambda context,now: bool((h := current_history(Config(config.path))) and h.diary_valid(context,now))))
+                                                    observation_guard=lambda context,now: bool((h := current_history(reload_config())) and h.diary_valid(context,now))))
         def active_routes():
-            enabled = Config(config.path).enabled_platforms
+            enabled = reload_config().enabled_platforms
             return tuple((name, module.account_id) for name, module in modules.items() if name in enabled)
         engine.routing = active_routes
         from murasamebot.application.task_routing import owner_video_route

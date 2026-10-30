@@ -13,15 +13,16 @@ LOG = logging.getLogger("murasame")
 
 
 class WorkerCoordinator:
-    def __init__(self, config_path: Path, *, runtime_builder=build):
+    def __init__(self, config_path: Path, *, runtime_builder=build, config_loader=Config):
         self.path, self.build = config_path, runtime_builder
+        self.config_loader = config_loader
         self.pool = ThreadPoolExecutor(max_workers=35, thread_name_prefix="murasame")
         self.model_limit = ModelConcurrency(4)
         self.messages, self.background, self.sender, self.memory = [], None, None, None
         self.observer = None
 
     def job(self, kind):
-        config = Config(self.path)
+        config = self.config_loader(self.path)
         runtime = self.build(config, concurrency=self.model_limit)
         try:
             if kind == "observation":

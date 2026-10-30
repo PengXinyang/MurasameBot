@@ -1,5 +1,8 @@
 # 当前架构
 
+2026-10-31平台生命周期补充：管理台装配`bootstrap/receivers.py:ReceiverManager`，统一管理QQ长期HTTP接收器与原B站轮询的启停，复用唯一worker_loop/WorkerCoordinator。运行配置按当前进程选择过滤，协调任务和最终发送门禁重新读取；操作系统文件锁防同agent/数据库的CLI与管理台重复worker。NapCat独立，原独立命令兼容。详见[平台服务](PLATFORM_SERVICES.md)。
+
+
 实现核对日期：2026-10-30；已完成Q0平台解耦及Q1主人QQ文字/图片私聊代码，Q1使用独立OneBot HTTP适配器、签名事件接收器、持久chat_inbox缓冲，复用MemoryService/VisionService及outbox。QQ网关尚未安装，QQ保持关闭，未实号验收。微信、X发布和视频投稿未接入。早期多级目录图是目标设计，实际结构见[平台模块说明](PLATFORM_MODULES.md)与[QQ私聊](QQ_PRIVATE_CHAT.md)。
 
 ## QQ接入与模块化方向（2026-10-30，Q0已编码）

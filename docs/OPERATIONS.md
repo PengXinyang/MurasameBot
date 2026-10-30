@@ -30,7 +30,7 @@ MURASAME_OWNER_UID=your-bilibili-uid
 
 ## 两个独立登录
 
-平台开关从2026-10-30起支持`platforms.bilibili.enabled`，默认/旧配置均为true。关闭后不创建B站客户端、观察来源或轮询；本地状态与普通记忆页面仍可使用，已排队动作不会因其他平台工作而误发。新增/重新启用模块后重启工作进程完成装配。当前默认注册表只有B站，真实QQ尚未接入，不能仅设置`qq.enabled: true`就获得QQ收发。完整说明见[平台模块](PLATFORM_MODULES.md)；两个B站登录流程保持原样。
+平台开关使用`platforms.<name>.enabled`，旧配置默认启用B站；QQ已具备主人私聊连接器和独立签名上报。管理台ReceiverManager可分别启停平台服务，QQ-only不会自动启动B站；禁用平台不参与新任务领取和发送，待处理数据保留。管理台外的CLI部署方式、登录凭证/连接参数变更与生命周期边界见[平台服务](PLATFORM_SERVICES.md)和[平台模块](PLATFORM_MODULES.md)。下列两个登录仅指B站AI社交账号与主人历史账号，QQ的NapCat登录见[QQ私聊](QQ_PRIVATE_CHAT.md)。
 
 1. **AI发布账号**：`python run.py login`，用AI账号的B站App扫码；凭证在`.secrets/bilibili.json`。可配置预期`bilibili.robot_uid`防止误登。`python run.py doctor --online`只读检查登录。
 2. **主人历史账号**：启动管理台，在独立的“主人足迹”页扫码，必须匹配已绑定主人；凭证在`.secrets/bilibili-owner.json`，不会覆盖AI登录。成功后启用采集，首次同步只建基线。
@@ -41,11 +41,13 @@ MURASAME_OWNER_UID=your-bilibili-uid
 
 ## 启动与发布模式
 
+2026-10-31：`serve`内置ReceiverManager，可在“运行概况 → 平台服务”分别启动QQ/B站；QQ回调随管理台托管，无需额外`qq-listen`进程。初次切换先停止旧独立worker/接收器，保留NapCat运行；`--with-worker`自动启动配置中开启的全部平台。保存平台设置开关也会同步启停。其他平台、在途请求和持久队列边界见[平台服务](PLATFORM_SERVICES.md)。
+
 ```powershell
-# 只有本机管理台；不启动轮询和自动发布
+# 先运行本机管理台，之后在页面分别启动QQ/B站
 .\.venv\Scripts\python.exe run.py serve
 
-# 同时运行工作循环，可能调用模型并按配置真实发布
+# 自动启动已开启的平台接收服务及共用工作循环，可能真实发布
 .\.venv\Scripts\python.exe run.py serve --with-worker
 
 # 无管理台的后台循环；通常与上一条二选一

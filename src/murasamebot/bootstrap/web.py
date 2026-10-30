@@ -3,11 +3,9 @@ from __future__ import annotations
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import logging
 from pathlib import Path
 import secrets
 import sqlite3
-from threading import Event, Thread
 import time
 from urllib.parse import urlparse, parse_qs
 
@@ -37,7 +35,7 @@ def admin_token(root: Path) -> str:
     return path.read_text(encoding="ascii").strip()
 
 
-def handler_for(config_path: Path, token: str):
+def handler_for(config_path: Path, token: str, *, receivers=None):
     owner_login = OwnerLoginManager()
     class Handler(BaseHTTPRequestHandler):
         def handle(self):
@@ -86,7 +84,7 @@ def handler_for(config_path: Path, token: str):
 
         def do_GET(self):
             path = urlparse(self.path).path
-            console_assets = {"/assets/"+name for name in ("console-common.js","bilibili-console.js","qq-console.js","shared-memory.js")}
+            console_assets = {"/assets/"+name for name in ("console-common.js","bilibili-console.js","qq-console.js","shared-memory.js","receivers.js")}
             if path in console_assets or path in {"/assets/dashboard.css","/assets/owner-history.js","/assets/request-controls.js","/assets/social-state.js"} or path in CHARACTER_ASSETS:
                 if self.headers.get("Host", "").split(":")[0] not in {"127.0.0.1", "localhost"}:
                     self.response(401, {"error": "仅限本机访问"})
@@ -127,6 +125,8 @@ def handler_for(config_path: Path, token: str):
                 config = Config(config_path)
                 if path == "/api/config":
                     self.response(200, config.public())
+                elif path == '/api/receivers':
+                    self.response(200,receivers.status() if receivers else {"managed":False,"platforms":{}})
                 elif path.startswith('/api/platforms/'):
                     from murasamebot.bootstrap.console import platform_console
                     self.response(200,platform_console(config,path.rsplit('/',1)[-1]))
@@ -199,7 +199,14 @@ def handler_for(config_path: Path, token: str):
                 config = Config(config_path)
                 store = prepare_store(config)
                 path = urlparse(self.path).path
-                if path == "/api/qq/check":
+                if path == "/api/receivers":
+                    if receivers is None:
+                        raise ValueError("当前服务未装配ReceiverManager，请通过serve启动管理台")
+                    if set(data) != {"platform", "operation"} or not all(isinstance(v,str) for v in data.values()):
+                        raise ValueError("只接受平台名称和start/stop操作")
+                    self.response(200,receivers.control(data["platform"],data["operation"]))
+                    return
+                elif path == "/api/qq/check":
                     from murasamebot.bootstrap.console import check_qq
                     self.response(200,check_qq(config))
                 elif path == "/api/owner-history/login/start":
@@ -221,7 +228,10 @@ def handler_for(config_path: Path, token: str):
                     finally:
                         source.close()
                 elif path == "/api/config":
-                    config.save_local(data)
+                    if receivers:
+                        receivers.configure(data)
+                    else:
+                        config.save_local(data)
                     if "paused" in data:
                         store.set_setting("paused", bool(data["paused"]))
                 elif path == "/api/emojis/refresh":
@@ -306,27 +316,19 @@ def handler_for(config_path: Path, token: str):
 
 
 def serve(config_path: Path, *, with_worker=False):
+    from murasamebot.bootstrap.receivers import ReceiverManager
     config = Config(config_path)
     token = admin_token(config.root)
     host, port = config.data["web"]["host"], config.data["web"]["port"]
-    server = ThreadingHTTPServer((host, port), handler_for(config_path, token))
-    stop = Event()
-    worker = None
-    if with_worker:
-        from murasamebot.bootstrap.cli import worker_loop
-        def work():
-            try:
-                worker_loop(config_path, stop)
-            except (ValueError, OSError, KeyError) as exc:
-                logging.getLogger("murasame").error("工作循环未启动：%s", exc)
-        worker = Thread(target=work, daemon=True, name="murasame-worker")
-        worker.start()
+    receivers = ReceiverManager(config_path)
+    server = ThreadingHTTPServer((host, port), handler_for(config_path, token, receivers=receivers))
+    server.daemon_threads = True
     print(f"本机管理台：http://{host}:{port}/#token={token}")
-    print("该链接可管理本地账号，请保存在本机。" + ("工作循环已请求启动。" if with_worker else "当前仅运行管理台。"))
+    print("该链接可管理本地账号，请保存在本机。" + ("已请求启动配置中的平台服务。" if with_worker else "可在运行概况中分别启动QQ与B站。"))
     try:
+        if with_worker:
+            receivers.start_configured()
         server.serve_forever(poll_interval=0.3)
     finally:
-        stop.set()
+        receivers.close()
         server.server_close()
-        if worker:
-            worker.join(timeout=2)

@@ -34,19 +34,15 @@
 
 返回`account_matches`及`owner_is_friend`均为true后，把本地`platforms.qq.enabled`设为true。本项目不自动接受陌生好友、不处理群或临时会话。
 
-4. 启动接收器：
+4. 启动管理台，在“运行概况 → 平台服务”点击“启动QQ”。接收器和唯一业务worker由管理台托管；无需额外终端运行`qq-listen`。初次迁移先停止原独立worker/接收器，保留NapCat。需要找B站视频时也启动B站模块。
 
 ```powershell
-.\.venv\Scripts\python.exe run.py qq-listen
+.\.venv\Scripts\python.exe run.py serve
 ```
 
-5. 另一个终端启动原管理台与唯一业务worker（已有worker则重启加载新代码，不重复启动）：
+如需启动时自动运行配置中启用的平台，使用`serve --with-worker`。旧`qq-listen`和`run`命令继续支持独立部署，勿与托管服务重复使用。具体启停、端口冲突、工作循环锁及在途请求边界见[平台服务](PLATFORM_SERVICES.md)。
 
-```powershell
-.\.venv\Scripts\python.exe run.py serve --with-worker
-```
-
-接收器支持NapCat实际使用的HTTP分块传输与固定长度请求，按解码后的原始JSON字节验签；请求体上限256KiB并有读取超时。接收器仅鉴权、核验并持久化，不调用模型或发送回复。业务worker每秒检查QQ缓冲；两个进程都需要保持运行，只有接收器时消息会留在缓冲中。API和回调目前只支持本机连接；远程部署需要另做网络鉴权配置。
+接收器支持NapCat的HTTP分块传输与固定长度请求，按原始JSON字节验签；请求体上限256KiB并有读取超时。只鉴权、核验和持久化，不调用模型或发送。仅接收器时消息留在缓冲，管理台托管会同时运行worker。API和回调目前只支持本机连接；远程部署另做网络鉴权配置。
 
 ## 行为
 

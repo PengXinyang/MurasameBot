@@ -106,11 +106,17 @@ def handler_for(path):
     return Handler
 
 
-def serve(path):
+def create_server(path):
     config = Config(path)
     if "qq" not in config.enabled_platforms or not config.data["qq"]["callback_secret"]:
         raise ValueError("请先配置并启用QQ模块及回调密钥")
     server = ThreadingHTTPServer(("127.0.0.1",config.data["qq"]["callback_port"]),handler_for(path))
+    server.daemon_threads = True
+    return server
+
+
+def serve(path):
+    server = create_server(path)
     try:
         server.serve_forever()
     finally:
