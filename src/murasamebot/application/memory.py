@@ -37,6 +37,32 @@ class MemoryService:
         self.observations, self.persona = observations, persona
         self.observation_guard = observation_guard
 
+    def public_initiative_context(self, now):
+        epoch = self.store.get_setting("memory_epoch",0)
+        history, memories = [], []
+        if self.settings.enabled:
+            for scope in self.store.memory_scopes():
+                if scope["purpose"] != "public_dialogue":
+                    continue
+                rows = self.store.memory_records(scope["person_id"],scope["scope"],"public_dialogue",
+                    limit=self.settings.recent_messages,before=now)
+                history.extend({"speaker":r["role"],"text":r["text"],"time":r["occurred_at"],"source":r["record_id"]} for r in rows if r["visibility"]=="public")
+                for product in self.store.memory_products(scope["person_id"],scope["scope"],"public_dialogue",limit=10):
+                    sources=self.store.memory_source_records(list(product["sources"]))
+                    if sources and len(sources)==len(set(product["sources"])) and all(
+                            r["active"] and r["visibility"]=="public" and r["purpose"]=="public_dialogue" for r in sources):
+                        memories.append({"text":product["text"],"kind":product["kind"],"sources":product["sources"]})
+        history.sort(key=lambda r:r["time"],reverse=True)
+        remaining = self.settings.context_characters
+        selected = {"history":[],"memories":[],"memory_epoch":epoch}
+        for key,items in (("history",history[:self.settings.recent_messages]),("memories",memories)):
+            for item in items:
+                cost=len(json.dumps(item,ensure_ascii=False))
+                if cost<=remaining:
+                    selected[key].append(item);remaining-=cost
+        selected["history"].reverse()
+        return selected
+
     def context(self, event, person, owner, now):
         epoch = self.store.get_setting("memory_epoch", 0)
         if not self.settings.enabled:
@@ -46,6 +72,13 @@ class MemoryService:
         purpose = "private_dialogue" if event.visibility == "private" else "public_dialogue"
         history = self.store.memory_records(person,scope,purpose,limit=self.settings.recent_messages,before=event.occurred_at)
         shared_products = []
+        if owner and event.visibility == "private":
+            # The same agent remembers its public posts while speaking privately.
+            for other in self.store.memory_scopes():
+                if other["person_id"]=="agent:self" and other["purpose"]=="public_dialogue":
+                    history += self.store.memory_records("agent:self",other["scope"],"public_dialogue",
+                        limit=self.settings.recent_messages,before=event.occurred_at)
+            history = sorted(history,key=lambda r:r["occurred_at"],reverse=True)[:self.settings.recent_messages]
         if owner and event.visibility == "private" and self.shared_owner_private:
             for other in self.store.memory_scopes():
                 binding = self.store.binding(person, other["platform"])

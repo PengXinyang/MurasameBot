@@ -57,6 +57,7 @@ class AutonomyTarget:
     private_enabled: bool = True
     activity: object = None
     scope: str = ""
+    channels: tuple = ("dynamic", "private")
 
     def key(self, prefix, suffix):
         return prefix + (self.scope + ":" if self.scope else "") + suffix
@@ -82,14 +83,15 @@ class AutonomyService:
     def allowed_kinds(self, now):
         e = self.engine
         return tuple(dict.fromkeys(KINDS[c] for t in self.routes() for c in KINDS
-                     if t.settings.enabled(c) and (c != "private" or t.private_enabled)
+                     if c in t.channels and t.settings.enabled(c) and (c != "private" or t.private_enabled)
                      and t.settings.open_at(now, e.settings.timezone) == now))
 
     def guard(self, action, now):
         if action.kind not in KINDS.values():
             return ""
         e = self.engine
-        target = next((t for t in self.routes() if t.platform==action.platform and t.account_id==action.account_id),None)
+        channel = "private" if action.kind == "proactive_private" else "dynamic"
+        target = next((t for t in self.routes() if t.platform==action.platform and t.account_id==action.account_id and channel in t.channels),None)
         if target is None:
             return "目标平台未启用自主消息"
         s = target.settings
@@ -140,7 +142,7 @@ class AutonomyService:
         if not any((s.dynamic_enabled,s.private_enabled)):
             return False
         for channel, kind in KINDS.items():
-            if not s.enabled(channel):
+            if channel not in target.channels or not s.enabled(channel):
                 continue
             key = target.key("autonomy_status:",channel)
             state = e.store.get_setting(key, {})
@@ -163,6 +165,12 @@ class AutonomyService:
             binding, conversation = None, ""
             context = {"history": [], "memories": [], "memory_epoch": e.store.get_setting("memory_epoch", 0)}
             try:
+                if channel == "dynamic":
+                    context = e.memory_service.public_initiative_context(now)
+                    # Check the publishing account before spending a model call.
+                    sink = e.sinks.get(target.platform)
+                    if hasattr(sink,"account"):
+                        sink.account()
                 if channel == "private":
                     if not target.private_enabled:
                         status["state"] = "private_disabled"
@@ -214,7 +222,7 @@ class AutonomyService:
                     continue
                 text, emojis = e.message_text(result, options, s.max_post_characters if channel == "dynamic" else e.settings.max_private_characters,
                     multilingual=channel=="private" and e.private_policies.get(target.platform,{}).get("multilingual",False))
-                if channel == "dynamic" and social["states"] and blocked(combined_topic(local_topic(text),result.get("topic_class"))):
+                if channel == "dynamic" and (blocked(local_topic(text)) or (social["states"] and blocked(combined_topic(local_topic(text),result.get("topic_class"))))):
                     status["state"] = "topic_blocked"
                     continue
                 followups = e.social.followups(result,social)

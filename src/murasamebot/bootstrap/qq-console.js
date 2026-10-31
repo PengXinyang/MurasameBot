@@ -10,6 +10,11 @@ function loadQQSettings() {
     node.value = key === 'windows' ? value.map(w => w.start+'-'+w.end).join('\n')
       : key === 'weekdays' ? value.join(',') : key === 'topics' ? value.join('\n') : String(value);
   }
+  for (const node of document.querySelectorAll('[data-qq-space]')) {
+    const key = node.dataset.qqSpace, value = config.qq_space[key];
+    node.value = key === 'windows' ? value.map(w => w.start+'-'+w.end).join('\n')
+      : key === 'weekdays' ? value.join(',') : key === 'topics' ? value.join('\n') : String(value);
+  }
 }
 
 async function saveQQAutonomy() {
@@ -24,6 +29,21 @@ async function saveQQAutonomy() {
     await api('config', {qq_autonomy:settings});
     await loadConfig(); await refresh();
     notice('QQ主动私聊设置已保存；保持QQ平台服务运行，丛雨会选择发送、稍后发送或跳过。');
+  } catch (e) { notice(e.message, true); }
+}
+
+async function saveQQSpace() {
+  try {
+    const settings = Object.fromEntries([...document.querySelectorAll('[data-qq-space]')].map(node => {
+      const key = node.dataset.qqSpace, value = node.value;
+      return [key, key === 'windows' ? value.split('\n').filter(s=>s.trim()).map(s=>{const [start,end]=s.trim().split('-');return {start,end};})
+        : key === 'weekdays' ? value.split(/[,，]/).filter(s=>s.trim()).map(Number)
+        : key === 'topics' ? value.split('\n').map(s=>s.trim()).filter(Boolean)
+        : node.type === 'number' ? Number(value) : value === 'true'];
+    }));
+    await api('config', {qq_space:settings});
+    await loadConfig(); await refresh();
+    notice('空间设置已保存；保持QQ服务运行，可在下方查看说说计划和回执。');
   } catch (e) { notice(e.message, true); }
 }
 
@@ -51,6 +71,9 @@ async function checkQQConnection() {
 
 function renderQQConsole(data) {
   const connection = data.connection, buffered = data.buffered;
+  const space = data.space?.status || {};
+  document.querySelector('#qq-space-status').textContent = !config.qq_space.dynamic_enabled ? '空间自主说说已关闭。'
+    : `最近判断：${space.state || '等待首次检查'}${space.planned_at ? ' · 计划时间 '+time(space.planned_at) : ''}${space.next_at ? ' · 下次检查 '+time(space.next_at) : ''}`;
   const initiative = data.autonomy || {}, status = initiative.status || {};
   const stateNames = {waiting:'等待合适时机',skipped:'本轮选择不发送',planned:'已安排主动私聊',error:'检查失败，等待重试',conversation_busy:'正在聊天，暂不打扰',relationship_blocked:'账号或主人好友关系未确认',budget_exhausted:'今日判断额度已用完',duplicate_skipped:'跳过重复内容',outside_window:'不在允许时段',invalidated:'来源或授权已变化',private_disabled:'主动私聊已关闭'};
   document.querySelector('#qq-autonomy-status').textContent = !config.qq_autonomy.private_enabled ? '主动私聊已关闭。'

@@ -89,6 +89,7 @@ class Config:
         raw = merge({"platforms":{"bilibili":{"enabled":True}},"social":asdict(SocialSettings()),"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
                      "bilibili":{"private_poll_seconds":30},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
+                     "qq_space":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_autonomy":{**asdict(AutonomySettings()),"daily_decision_limit":32,"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "limits":{"event_retry_seconds":60},
                      "browsing":{"recommendation_only":True,"min_video_views":8000,"min_video_comments":20},
@@ -181,6 +182,9 @@ class Config:
             raise ValueError("审核策略只能为 inline（生成时判断）或 independent（独立模型复核）")
         validate_autonomy(data.get("autonomy", {}))
         validate_autonomy(data.get("qq_autonomy", {}))
+        validate_autonomy(data.get("qq_space", {}))
+        if data["qq_space"]["private_enabled"]:
+            raise ValueError("空间设置不控制私聊")
         if data["qq_autonomy"]["dynamic_enabled"]:
             raise ValueError("QQ自主设置当前只支持主人私聊")
         memory = data.get("memory", {})
@@ -456,7 +460,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"qq_autonomy", "qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"qq_space", "qq_autonomy", "qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if not isinstance(patch.get("qq",{}),dict) or set(patch.get("qq",{})) - {"quiet_seconds","max_wait_seconds","max_reply_messages"}:

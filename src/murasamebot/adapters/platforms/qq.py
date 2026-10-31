@@ -21,7 +21,7 @@ class QQAdapter:
         return bool(self.account_id and self.settings["access_token"] and self.settings["callback_secret"])
 
     def api(self, action, payload=None, *, writing=False):
-        if action not in {"get_login_info", "get_friend_list", "send_private_msg"}:
+        if action not in {"get_login_info", "get_friend_list", "send_private_msg", "send_qzone_msg"}:
             raise ValueError("unsupported QQ API")
         try:
             response = self.client.post("/" + action, json=payload or {})
@@ -98,6 +98,20 @@ class QQAdapter:
         return ChatBatches(self.store).activity(account_id, peer_id, binding["version"], now)
 
     def send(self, action, mentions, *, before_write=None):
+        if action.kind == "autonomous_post":
+            if (action.platform!="qq" or action.account_id!=self.account_id or action.visibility!="public"
+                    or action.recipient_id or mentions or action.content or action.artwork):
+                return Receipt("failed",detail="QQ空间发布路由无效")
+            self.account()
+            if before_write and not before_write():
+                return Receipt("failed",detail="发送前策略校验失败")
+            result=self.api("send_qzone_msg",{"content":action.text,"images":[],"ugc_right":4,"target_uins":[]},writing=True)
+            if isinstance(result,dict) and result.get("failed"):
+                return Receipt("failed",detail="QQ空间接口明确拒绝；请检查网关版本及空间权限")
+            tid=result.get("tid") if isinstance(result,dict) else None
+            if not isinstance(tid,str) or not tid.strip():
+                return Receipt("unknown",detail="未取得QQ空间确定回执，禁止自动重发")
+            return Receipt("accepted",tid,"QQ空间已受理；好友可见，实际可见性待验证")
         if action.kind not in {"private_reply", "task_result", "proactive_private"} or action.platform != "qq" or mentions or not self.allows_private_reply(action.account_id, action.recipient_id):
             return Receipt("failed", detail="QQ收件人或好友权限无效")
         if before_write and not before_write():

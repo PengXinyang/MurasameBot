@@ -33,21 +33,22 @@ class QQModule(PlatformModule):
 
 def prepare_state(config, store):
     from murasamebot.domain.models import stable_id
-    stamp = stable_id(config.data["qq_autonomy"])
-    previous = store.get_setting("qq_autonomy_config_stamp")
-    if previous != stamp:
-        if previous is not None:
-            store.cancel_autonomy(platform="qq")
-        store.set_setting("qq_autonomy_config_stamp", stamp)
+    for key,kind in (("qq_autonomy","proactive_private"),("qq_space","autonomous_post")):
+        stamp = stable_id(config.data[key])
+        previous = store.get_setting(key+"_config_stamp")
+        if previous != stamp:
+            if previous is not None:
+                store.cancel_autonomy(platform="qq",kind=kind)
+            store.set_setting(key+"_config_stamp",stamp)
 
 
 def build_module(config, store):
     from murasamebot.adapters.platforms.qq import QQAdapter, IMAGE_HOSTS
     from murasamebot.adapters.media.http_images import HTTPImageReader
     adapter = QQAdapter(config.data["qq"],store,config.data["owner_person_id"])
-    module = QQModule("qq",adapter,frozenset({"private_reply", "task_result", "proactive_private"}),poll_seconds=1,
+    module = QQModule("qq",adapter,frozenset({"private_reply", "task_result", "proactive_private", "autonomous_post"}),poll_seconds=1,
         private_policy={"multilingual":True,"topic_filter":False},autonomy_key="qq_autonomy",
-        autonomy_activity=adapter.pending_private_activity)
+        autonomy_activity=adapter.pending_private_activity,public_autonomy_key="qq_space")
     module.private_image_reader = HTTPImageReader(hosts=IMAGE_HOSTS,referer="")
     module.resources = (module.private_image_reader,)
     return module

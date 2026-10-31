@@ -20,6 +20,8 @@ def platform_console(config, platform):
         result['batching'] = {k:settings[k] for k in ('quiet_seconds','max_wait_seconds','max_reply_messages')}
         result['autonomy'] = {'settings':config.data['qq_autonomy'],
             'status':store.get_setting('autonomy_status:qq:private',{})}
+        result['space'] = {'settings':config.data['qq_space'],
+            'status':store.get_setting('autonomy_status:qq:space:dynamic',{})}
     return result
 
 

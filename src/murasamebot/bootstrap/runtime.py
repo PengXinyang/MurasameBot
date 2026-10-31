@@ -253,7 +253,7 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                     return reason
             if action.kind in {"autonomous_post", "proactive_private"}:
                 from murasamebot.application.autonomy import AutonomySettings
-                policy = AutonomySettings.from_config(current.data[module.autonomy_key])
+                policy = AutonomySettings.from_config(current.data[module.public_autonomy_key if action.kind=="autonomous_post" and module.public_autonomy_key else module.autonomy_key])
                 channel = "private" if action.kind == "proactive_private" else "dynamic"
                 if (not policy.enabled(channel) or policy.version() != action.autonomy_version
                         or policy.open_at(now, current.data["timezone"]) != now):
@@ -302,8 +302,12 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
             replace(AutonomySettings.from_config(config.data[module.autonomy_key]),
                 dynamic_enabled=config.data[module.autonomy_key]["dynamic_enabled"] and "autonomous_post" in module.capabilities,
                 private_enabled=config.data[module.autonomy_key]["private_enabled"] and "proactive_private" in module.capabilities),
-            module.autonomy_private_enabled,module.autonomy_activity,name if module.autonomy_key!="autonomy" else "")
+            module.autonomy_private_enabled,module.autonomy_activity,name if module.autonomy_key!="autonomy" else "",
+            ("private",) if module.public_autonomy_key else ("dynamic","private"))
             for name,module in modules.items() if {"autonomous_post","proactive_private"} & module.capabilities)
+        engine.autonomy.targets += tuple(AutonomyTarget(name,module.account_id,
+            AutonomySettings.from_config(config.data[module.public_autonomy_key]),scope=name+":space",channels=("dynamic",))
+            for name,module in modules.items() if module.public_autonomy_key)
         from murasamebot.application.task_routing import owner_video_route
         engine.request_route = lambda event,person: owner_video_route(store,event,person,provider="bilibili",
             private_platform="qq",public_platform="bilibili",accounts=dict(active_routes())) if event.platform=="qq" else None

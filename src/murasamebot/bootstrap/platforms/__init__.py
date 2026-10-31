@@ -20,6 +20,7 @@ class PlatformModule:
     autonomy_key: str = "autonomy"
     autonomy_private_enabled: bool = True
     autonomy_activity: object = None
+    public_autonomy_key: str = ""
 
     @property
     def account_id(self):

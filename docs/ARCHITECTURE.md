@@ -5,6 +5,10 @@
 
 实现核对日期：2026-10-30；已完成Q0平台解耦及Q1主人QQ文字/图片私聊代码，Q1使用独立OneBot HTTP适配器、签名事件接收器、持久chat_inbox缓冲，复用MemoryService/VisionService及outbox。QQ网关尚未安装，QQ保持关闭，未实号验收。微信、X发布和视频投稿未接入。早期多级目录图是目标设计，实际结构见[平台模块说明](PLATFORM_MODULES.md)与[QQ私聊](QQ_PRIVATE_CHAT.md)。
 
+## 空间与统一记忆补充（2026-10-31）
+
+同一个MemoryService增加public_initiative_context，从共同库选择有公开来源的档案/产物，供B站和空间共用；主人私聊补充同一agent已发表公开文字的回忆。AutonomyTarget以channels区分同QQ账号的空间dynamic和私聊private目标，qq_space与qq_autonomy分别校验/取消计划，统一outbox发送。QQAdapter实现原生send_qzone_msg，固定好友可见文字并校验tid，B站协议不变。详见[QQ空间](QQ_SPACE.md)。
+
 ## QQ主动私聊装配补充（2026-10-31）
 
 AutonomyService接收装配层的AutonomyTarget表，逐平台使用策略、账号与入站活动回调；仍由一个WorkerCoordinator后台通道生成并通过同一outbox发送。QQ策略在qq_autonomy，B站保留autonomy及原状态键；计划快照/正文去重按平台隔离，QQ ChatBatches活动检查覆盖未合并消息。QQ主动会话使用与入站相同的规范化ID，MemoryService共享私人上下文和受理输出档案。B站专属读取静默/冷却不驱动QQ计划或阻断QQ判断。详见[QQ主动私聊](QQ_AUTONOMY.md)。

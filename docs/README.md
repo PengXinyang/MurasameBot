@@ -22,6 +22,7 @@
 | [PLATFORM_SERVICES.md](PLATFORM_SERVICES.md) | 管理台内QQ/B站独立启停、ReceiverManager、唯一worker与接收服务扩展 |
 | [QQ_PRIVATE_CHAT.md](QQ_PRIVATE_CHAT.md) | QQ主人文字/图片私聊、网关安装、签名上报、静默合并、分条回复、共享私人记忆与大肥鱼参考 |
 | [QQ_AUTONOMY.md](QQ_AUTONOMY.md) | QQ主人主动文字私聊、上下文择时、独立策略/预算、合并输入与计划取消 |
+| [QQ_SPACE.md](QQ_SPACE.md) | 空间自主说说、动态和私聊统一记忆、好友可见发布及验证边界 |
 | [QQ_BILIBILI_TASKS.md](QQ_BILIBILI_TASKS.md) | QQ视频委托、B站查找、QQ回传/B站提及、持久路由与取消竞态 |
 | [PROVENANCE.md](PROVENANCE.md) | 上一级资料如何提炼、哪些材料留在本机及历史结论的取舍 |
 | [VALIDATION.md](VALIDATION.md) | 本次推送对应的验证记录及证据限制 |

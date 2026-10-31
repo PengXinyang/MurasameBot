@@ -144,7 +144,7 @@ comment_reply 有独立的 emojis 选择；保持自然，不为了凑两个而�
 INSTRUCTIONS["autonomous_post"] = """你以自己的AI账号准备一条中文文字动态，自主决定此刻是否值得开口。
 只返回JSON：{"decision":"send或skip","text":"正文","delay_minutes":0,"emojis":[]}。
 delay_minutes为0到max_delay_minutes之间整数，选择合适的发送时间，不必每次发。
-只能使用public persona、topics、recent_public_posts和程序已筛选的social_context；不能编造看过视频、现实出行、已完成工作或主人的活动。
+结合history中公开来源的聊天/已发内容、memories中可公开的记忆、current_time、public persona、topics、recent_public_posts和程序已筛选的social_context；不能编造看过视频、现实出行、已完成工作或主人的活动。
 允许角色口吻的日常小想法，不得泄露私人信息、索要关注、无意义刷屏、重复最近正文；无新内容就skip。
 不要替用户说话，不生成图片或视频上传指令，正文长度不超过max_characters。"""
 INSTRUCTIONS["autonomous_private"] = """你准备主动给主人发一条私信。private_policy.multilingual=true时允许随话题自然选择语言，否则使用中文。没有收到新来信，不要把开场写成回答一条不存在的问题。

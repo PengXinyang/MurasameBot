@@ -618,10 +618,12 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             sent = db.execute("SELECT MAX(sent_at) FROM actions WHERE agent_id=? AND state='accepted' AND json_extract(payload,'$.visibility')='private' AND json_extract(payload,'$.conversation_id')=?", (self.agent_id,conversation)).fetchone()[0]
             return {"last_at": max(row["last_at"] or 0, sent or 0), "pending": row["pending"]}
 
-    def cancel_autonomy(self, *, platform=None):
+    def cancel_autonomy(self, *, platform=None, kind=None):
         with self.transaction() as db:
             scope = " AND json_extract(payload,'$.platform')=?" if platform is not None else ""
-            db.execute("UPDATE actions SET state='cancelled',receipt=? WHERE agent_id=? AND kind IN ('autonomous_post','proactive_private') AND state IN ('draft','queued','reviewing')" + scope, (dumps({"detail":"自主发布配置已变化，旧计划已取消"}),self.agent_id, *((platform,) if platform is not None else ())))
+            if kind is not None:
+                scope += " AND kind=?"
+            db.execute("UPDATE actions SET state='cancelled',receipt=? WHERE agent_id=? AND kind IN ('autonomous_post','proactive_private') AND state IN ('draft','queued','reviewing')" + scope, (dumps({"detail":"自主发布配置已变化，旧计划已取消"}),self.agent_id, *((platform,) if platform is not None else ()),*((kind,) if kind is not None else ())))
 
     def finish_action(self, action_id, receipt, now):
         if receipt.state not in ("accepted", "failed", "unknown"):
