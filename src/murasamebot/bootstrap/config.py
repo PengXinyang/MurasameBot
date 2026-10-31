@@ -14,6 +14,7 @@ import yaml
 from murasamebot.application.settings import Behaviour
 from murasamebot.application.memory import MemorySettings
 from murasamebot.application.group_chat import DEFAULTS as GROUP_DEFAULTS
+from murasamebot.application.group_learning import DEFAULTS as LEARNING_DEFAULTS
 from murasamebot.application.autonomy import AutonomySettings
 from murasamebot.application.social import SocialSettings
 from murasamebot.application.owner_history import OwnerHistorySettings
@@ -92,7 +93,7 @@ class Config:
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_space":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_autonomy":{**asdict(AutonomySettings()),"daily_decision_limit":32,"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
-                     "qq_groups":GROUP_DEFAULTS,
+                     "qq_groups":GROUP_DEFAULTS,"qq_learning":LEARNING_DEFAULTS,
                      "limits":{"event_retry_seconds":60},
                      "browsing":{"recommendation_only":True,"min_video_views":8000,"min_video_comments":20},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
@@ -185,6 +186,8 @@ class Config:
         validate_autonomy(data.get("autonomy", {}))
         from murasamebot.application.group_chat import validate as validate_groups
         validate_groups(data.get('qq_groups',GROUP_DEFAULTS))
+        from murasamebot.application.group_learning import validate as validate_learning
+        validate_learning(data.get('qq_learning',LEARNING_DEFAULTS))
         validate_autonomy(data.get("qq_autonomy", {}))
         validate_autonomy(data.get("qq_space", {}))
         if data["qq_space"]["private_enabled"]:
@@ -464,7 +467,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"qq_groups", "qq_space", "qq_autonomy", "qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"qq_learning", "qq_groups", "qq_space", "qq_autonomy", "qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if not isinstance(patch.get("qq",{}),dict) or set(patch.get("qq",{})) - {"quiet_seconds","max_wait_seconds","max_reply_messages"}:

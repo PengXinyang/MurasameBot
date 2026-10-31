@@ -23,6 +23,7 @@
 | [QQ_PRIVATE_CHAT.md](QQ_PRIVATE_CHAT.md) | QQ主人文字/图片私聊、网关安装、签名上报、静默合并、分条回复、共享私人记忆与大肥鱼参考 |
 | [QQ_AUTONOMY.md](QQ_AUTONOMY.md) | QQ主人主动文字私聊、上下文择时、独立策略/预算、合并输入与计划取消 |
 | [QQ_SPACE.md](QQ_SPACE.md) | 空间自主说说、动态和私聊统一记忆、好友可见发布及验证边界 |
+| [QQ_GROUP_LEARNING.md](QQ_GROUP_LEARNING.md) | 群节奏/wait、来源学习、候选/可用与人工管理 |
 | [QQ_GROUP_PARTICIPATION.md](QQ_GROUP_PARTICIPATION.md) | 已编码：有界群窗口、自主接话/旁观、AI选择回答对象与最终失效保护 |
 | [QQ_GROUP_CHAT.md](QQ_GROUP_CHAT.md) | 已编码：指定群被动文字接话、对象识别、近期上下文、配置与验收边界 |
 | [QQ_GROUP_PLAN.md](QQ_GROUP_PLAN.md) | 后续规划：自主群聊节奏、表达/黑话学习；首期被动接话状态与阶段边界 |

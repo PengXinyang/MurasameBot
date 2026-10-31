@@ -1,6 +1,7 @@
 """Bounded, account/group-scoped context in the existing agent database."""
 import json
 import time
+from statistics import median
 from dataclasses import replace
 from murasamebot.domain.models import Event, stable_id
 
@@ -21,6 +22,7 @@ class GroupInbox:
                 PRIMARY KEY(agent,id))''')
             db.execute('CREATE TABLE IF NOT EXISTS group_seen(agent TEXT,id TEXT,PRIMARY KEY(agent,id))')
             db.execute('CREATE TABLE IF NOT EXISTS group_plans(agent TEXT,action TEXT,window TEXT,PRIMARY KEY(agent,action))')
+            db.execute('CREATE TABLE IF NOT EXISTS group_waits(agent TEXT,account TEXT,room TEXT,revision INTEGER,hits INTEGER,PRIMARY KEY(agent,account,room,revision))')
         self.sync_revision()
 
     def sync_revision(self):
@@ -49,7 +51,7 @@ class GroupInbox:
                     (self.store.agent_id,event.account_id,event.thread_root,1,now,now,0,None))
             db.execute('''DELETE FROM group_inbox WHERE agent=? AND account=? AND room=? AND id NOT IN
                 (SELECT id FROM group_inbox WHERE agent=? AND account=? AND room=? ORDER BY received DESC,rowid DESC LIMIT ?)''',
-                (self.store.agent_id,event.account_id,event.thread_root,self.store.agent_id,event.account_id,event.thread_root,settings['context_messages']))
+                (self.store.agent_id,event.account_id,event.thread_root,self.store.agent_id,event.account_id,event.thread_root,max(40,settings['context_messages'])))
             return bool(inserted)
 
     def flush(self,settings,now):
@@ -61,7 +63,9 @@ class GroupInbox:
             turns=db.execute('SELECT * FROM group_turns WHERE agent=? AND first_at IS NOT NULL',(self.store.agent_id,)).fetchall()
             for t in turns:
                 if t['room'] not in settings['group_ids'] or now<t['next_at']:continue
-                if now<min(t['last_at']+settings['quiet_seconds'],t['first_at']+settings['max_wait_seconds']):continue
+                rhythm=self.rhythm(t['account'],t['room'])
+                quiet=min(settings['quiet_seconds'],max(2,rhythm['median_gap_seconds'])) if rhythm['messages']>=6 else settings['quiet_seconds']
+                if now<min(t['last_at']+quiet,t['first_at']+settings['max_wait_seconds']):continue
                 if t['pending'] and db.execute("SELECT 1 FROM events WHERE agent_id=? AND event_id=? AND state IN ('pending','processing')",(self.store.agent_id,t['pending'])).fetchone():continue
                 args=(self.store.agent_id,t['account'],t['room'])
                 used=db.execute('SELECT COUNT(*) FROM group_windows WHERE agent=? AND account=? AND room=? AND created>=?',(*args,now-86400)).fetchone()[0]
@@ -71,13 +75,31 @@ class GroupInbox:
                 event=Event.from_dict(json.loads(row[0]))
                 # Unknown sends block this group before spending another model call.
                 if db.execute("SELECT 1 FROM actions WHERE agent_id=? AND kind='group_reply' AND json_extract(payload,'$.conversation_id')=? AND (state='unknown' OR (state IN ('accepted','sending') AND COALESCE(sent_at,created_at)>?))",(self.store.agent_id,event.conversation_id,now-settings['cooldown_seconds'])).fetchone():continue
-                key=stable_id('group-window',self.store.agent_id,*args[1:],t['revision'],event.event_id,settings,self.store.get_setting('memory_epoch',0))
+                key=stable_id('group-window',self.store.agent_id,*args[1:],t['revision'],event.event_id,t['next_at'],settings,self.store.get_setting('memory_epoch',0))
                 window=replace(event,event_id=key,kind='group_window',text='',reply_to='')
                 db.execute('INSERT OR IGNORE INTO group_windows VALUES(?,?,?,?,?,?,?)',(*args[:1],key,*args[1:],t['revision'],now,stable_id(settings)))
                 db.execute("INSERT OR IGNORE INTO events(agent_id,event_id,payload,state) VALUES(?,?,?,'pending')",(self.store.agent_id,key,json.dumps(window.to_dict(),ensure_ascii=False)))
                 db.execute('UPDATE group_turns SET first_at=NULL,next_at=?,pending=? WHERE agent=? AND account=? AND room=?',(now+settings['decision_interval_seconds'],key,*args))
                 count+=1
         return count
+
+    def rhythm(self,account,room):
+        with self.store.connection() as db:
+            rows=db.execute('SELECT payload,received FROM group_inbox WHERE agent=? AND account=? AND room=? ORDER BY received DESC,rowid DESC LIMIT 30',(self.store.agent_id,account,room)).fetchall()
+        gaps=[max(0,rows[i]['received']-rows[i+1]['received']) for i in range(len(rows)-1)]
+        return {'messages':len(rows),'participants':len({json.loads(r['payload'])['actor_id'] for r in rows}),
+                'median_gap_seconds':round(median(gaps),2) if gaps else 0}
+
+    def defer(self,window,settings,now,seconds):
+        if not self.valid_window(window,settings):return False
+        with self.store.transaction() as db:
+            w=db.execute('SELECT * FROM group_windows WHERE agent=? AND id=?',(self.store.agent_id,window)).fetchone()
+            args=(self.store.agent_id,w['account'],w['room'],w['revision'])
+            row=db.execute('SELECT hits FROM group_waits WHERE agent=? AND account=? AND room=? AND revision=?',args).fetchone()
+            if row and row[0]>=2:return False
+            db.execute('INSERT INTO group_waits VALUES(?,?,?,?,1) ON CONFLICT(agent,account,room,revision) DO UPDATE SET hits=hits+1',args)
+            db.execute('UPDATE group_turns SET first_at=?,next_at=MAX(next_at,?) WHERE agent=? AND account=? AND room=? AND revision=?',(now-settings['max_wait_seconds'],now+seconds,*args))
+        return True
 
     def valid_window(self,window,settings):
         if not settings['enabled'] or not settings['autonomous_enabled']:return False

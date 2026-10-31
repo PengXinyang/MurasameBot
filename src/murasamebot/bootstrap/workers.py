@@ -33,6 +33,8 @@ class WorkerCoordinator:
                     return False
                 return runtime.owner_history.sync(time.time())
             if kind == "memory":
+                learning=getattr(runtime.engine,'group_learning',None)
+                if learning and learning.step(time.time()):return True
                 return runtime.engine.memory_service.maintain()
             if kind == "message":
                 processed = runtime.engine.process_one_event()

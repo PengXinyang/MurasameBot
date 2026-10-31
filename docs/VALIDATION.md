@@ -1,5 +1,12 @@
 # 验证记录
 
+## 2026-10-31：群节奏/语言学习
+
+完整913项中912通过、1项既有人设范围断言失败，0错误/跳过，152.30秒，JUnit位于`.pytest-tmp/group-learning-release.xml`。随后将学习缓存独立于短回复窗口，追加1项回归，新增25项及新旧群99项均通过；原群/架构79项通过。人设与B站适配器未改动，唯一全量失败仍是test_persona_scope.py::test_character_secrets_and_owner_relationship_are_scoped_separately。
+
+验证逐字来源、虚构引文/策略模板拒绝、黑话多批门槛、顺序核对/重复提交幂等、人工优先和停用、跨群/账号检索、epoch/配置代际/暂停后迟到结果拒绝、来源期限与小时预算、独立实时学习缓存、reply可选知识和有限wait。Edge桌面1440/手机390宽3视图及设置保存、更正/来源按钮、私人计划与其他平台配置保持通过，无JS异常或溢出，截图已查看。模拟模型/OneBot和隔离库，不代表实群释义准确或节奏自然；未进行真实群写入。参考与参数见[QQ_GROUP_LEARNING.md](QQ_GROUP_LEARNING.md)。
+
+
 ## 2026-10-31：群聊自主参与窗口
 
 最终全量889项中888通过、1项既有人设范围断言失败，0错误/跳过，151.76秒；新增20项全部通过，新旧群相关74项通过。JUnit在忽略目录`.pytest-tmp/group-participation-release.xml`。唯一失败仍是test_persona_scope.py::test_character_secrets_and_owner_relationship_are_scoped_separately；B站适配器和人设文件未修改，未削弱测试。

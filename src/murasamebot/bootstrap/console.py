@@ -25,6 +25,11 @@ def platform_console(config, platform):
                 WHERE r.agent_id=? AND r.platform='qq' AND r.visibility='group' AND r.active=1
                 ORDER BY r.occurred_at DESC,r.record_id DESC LIMIT 50""",(store.agent_id,))]
         result['groups'] = {'settings':config.data['qq_groups'],'records':records}
+        from murasamebot.adapters.persistence.group_learning import GroupKnowledge
+        learning=GroupKnowledge(store)
+        result['groups']['learning']=[{**item,'group_id':room} for room in config.data['qq_groups']['group_ids'] for item in learning.records(settings['robot_id'],room)]
+        with store.connection() as db:
+            result['groups']['learning_stages']=dict(db.execute('SELECT stage,COUNT(*) FROM group_learning_batches WHERE agent=? AND account=? GROUP BY stage',(store.agent_id,settings['robot_id'])))
         result['batching'] = {k:settings[k] for k in ('quiet_seconds','max_wait_seconds','max_reply_messages')}
         result['autonomy'] = {'settings':config.data['qq_autonomy'],
             'status':store.get_setting('autonomy_status:qq:private',{})}

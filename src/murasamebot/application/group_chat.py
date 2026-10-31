@@ -22,6 +22,7 @@ def validate(settings):
 class GroupChat:
     def __init__(self,engine,settings,inbox,access):
         self.engine,self.settings,self.inbox,self.access=engine,settings,inbox,access
+        self.knowledge=None
 
     def handle(self,event,person,now):
         e,s=self.engine,self.settings
@@ -42,12 +43,18 @@ class GroupChat:
         owner=person==e.settings.owner_person_id
         if not autonomous and blocked(local_topic(event.text),owner):return
         result,options=e.message_decision('group_chat',{'persona':e.persona.prompt(False),
+            'learned_language':self.knowledge(event.account_id,event.thread_root,'\n'.join(m.text for m in messages)) if self.knowledge else [],
+            'rhythm':self.inbox.rhythm(event.account_id,event.thread_root),
             'autonomous':autonomous,'owner_addressed':owner if not autonomous else False,'target_user_id':event.actor_id if not autonomous else '','target_name':event.actor_name if not autonomous else '',
             'message':event.text if not autonomous else '', 'quoted_message_id':event.reply_to if not autonomous else '',
             'context':[{'user_id':m.actor_id,'name':m.actor_name,'text':m.text,'message_id':str(m.sequence),
                 'reply_to':m.reply_to,'time':m.occurred_at,'is_owner':e.store.resolve_person(m.platform,m.actor_id)==e.settings.owner_person_id,'role':'agent' if m.actor_id==event.account_id else 'user'} for m in messages],
             'quoted_message':self.access.group_quote(event.thread_root,event.reply_to) if event.reply_to and not autonomous else None,
             'memory_epoch':epoch,'max_characters':s['max_characters']},event.platform,event.account_id,'group',now)
+        if result.get('decision')=='wait' and autonomous:
+            seconds=result.get('wait_seconds',8)
+            if type(seconds) is int and 1<=seconds<=120:self.inbox.defer(event.event_id,s,now,seconds)
+            return
         if result.get('decision')=='skip':return
         if result.get('decision')!='reply':return
         if not autonomous and blocked(combined_topic(local_topic(result.get('text','')),result.get('topic_class')),owner):return

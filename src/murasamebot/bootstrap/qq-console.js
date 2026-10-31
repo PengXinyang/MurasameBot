@@ -1,5 +1,6 @@
 /* QQ owns its controls and projections; memory remains in shared-memory.js. */
 function loadQQSettings() {
+  for(const n of document.querySelectorAll('[data-qq-learning]'))n.value=String(config.qq_learning[n.dataset.qqLearning]);
   const q = config.qq || {};
   document.querySelector('#qq-enabled').value = String(config.platforms?.qq?.enabled ?? false);
   for (const key of ['quiet_seconds', 'max_wait_seconds', 'max_reply_messages']) {
@@ -80,8 +81,9 @@ async function checkQQConnection() {
 }
 
 function renderQQConsole(data) {
+  renderGroupLearning(data);
   const connection = data.connection, buffered = data.buffered;
-  document.querySelector('#qq-group-status').textContent=config.qq_groups.enabled?'群聊已开启 · 指定 '+config.qq_groups.group_ids.length+' 个群 · '+(config.qq_groups.autonomous_enabled?'自主判断接话或旁观':'仅被@或引用时回复')+'；未启用语言学习。':'被动群聊已关闭。';
+  document.querySelector('#qq-group-status').textContent=config.qq_groups.enabled?'群聊已开启 · 指定 '+config.qq_groups.group_ids.length+' 个群 · '+(config.qq_groups.autonomous_enabled?'自主判断接话或旁观':'仅被@或引用时回复')+(config.qq_learning.enabled?'；语言学习已开启（顺序自检）':'；语言学习已暂停'):'被动群聊已关闭。';
   rows('qq-group-records',data.groups?.records||[],r=>`<div class="row"><span class="pill">${esc(r.speaker_name||'群成员')} · ${esc(r.speaker_id)}</span><div class="message-body">${esc(r.text)}</div><div class="meta">群 ${esc(r.group_id)} · ${esc(time(r.occurred_at))}</div></div>`);
 
   const space = data.space?.status || {};
@@ -138,3 +140,19 @@ Object.assign(emptyCopies, {
 });
 
 emptyCopies['qq-group-records']=['尚无群聊归档','启用指定群后，被动接话及被平台受理的回复会在这里显示。'];
+
+async function saveQQLearning(){try{
+ const settings=Object.fromEntries([...document.querySelectorAll('[data-qq-learning]')].map(n=>[n.dataset.qqLearning,n.type==='number'?Number(n.value):n.value==='true']));
+ await api('config',{qq_learning:settings});await loadConfig();await refresh();notice('群学习设置已保存');
+}catch(e){notice(e.message,true)}}
+function renderGroupLearning(data){
+ document.querySelector('#qq-learning-state').textContent='批次阶段：'+JSON.stringify(data.groups?.learning_stages||{})+' · 新消息优先，空闲时学习';
+ rows('qq-learning-records',data.groups?.learning||[],r=>`<div class="row"><span class="pill">${esc(r.kind==='jargon'?'群内用语':'表达')} · ${esc(r.status)} · ${r.hits}批${r.manual?' · 人工':''}</span><p>${esc(r.term)}：${esc(r.meaning)}</p><div class="meta">群 ${esc(r.group_id)} · 顺序自检，非独立核验</div><div class="actions">${['sources','correct','disable','forget'].map(op=>`<button data-learning-op="${op}" data-room="${esc(r.group_id)}" data-key="${esc(r.id)}">${({sources:'查看来源',correct:'人工更正',disable:'停用',forget:'遗忘'})[op]}</button>`).join('')}</div></div>`);
+ document.querySelectorAll('[data-learning-op]').forEach(b=>b.onclick=async()=>{try{
+  const request={id:b.dataset.key,room:b.dataset.room,operation:b.dataset.learningOp};
+  if(request.operation==='correct'){request.meaning=prompt('填写准确释义或表达说明');if(request.meaning===null)return}
+  if(request.operation==='sources'){const r=await api('qq-learning/sources',request);document.querySelector('#qq-learning-sources').textContent=JSON.stringify(r,null,2);return}
+  await api('qq-learning/manage',request);await refresh();
+ }catch(e){notice(e.message,true)}});
+}
+emptyCopies['qq-learning-records']=['尚无语言学习记录','指定群有足量实时文字后，在空闲维护时提取和自检；观察中不代表已掌握。'];

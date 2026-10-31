@@ -301,6 +301,16 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
             from murasamebot.application.group_chat import GroupChat
             from murasamebot.adapters.persistence.group_inbox import GroupInbox
             group_chat=GroupChat(engine,config.data['qq_groups'],GroupInbox(store),modules['qq'].adapter)
+            from murasamebot.application.group_learning import GroupLearning
+            from murasamebot.adapters.persistence.group_learning import GroupKnowledge
+            knowledge=GroupKnowledge(store)
+            def learning_current():
+                current=reload_config()
+                groups=dict(current.data['qq_groups'])
+                if 'qq' not in current.enabled_platforms:groups['enabled']=False
+                return groups,current.data['qq_learning'],current.data['qq']['robot_id']
+            engine.group_learning=GroupLearning(store,model,knowledge,learning_current)
+            group_chat.knowledge=lambda account,room,text: knowledge.context(account,room,text,learning_current()[1]) if room in learning_current()[0]['group_ids'] and learning_current()[0]['enabled'] else []
             engine.event_handlers.update(group_message=group_chat.handle,group_window=group_chat.handle)
         from murasamebot.application.autonomy import AutonomySettings, AutonomyTarget
         engine.autonomy.targets = tuple(AutonomyTarget(name,module.account_id,

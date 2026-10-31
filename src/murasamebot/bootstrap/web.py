@@ -199,7 +199,15 @@ def handler_for(config_path: Path, token: str, *, receivers=None):
                 config = Config(config_path)
                 store = prepare_store(config)
                 path = urlparse(self.path).path
-                if path == "/api/receivers":
+                if path in {'/api/qq-learning/manage','/api/qq-learning/sources'}:
+                    from murasamebot.adapters.persistence.group_learning import GroupKnowledge
+                    room=str(data.get('room',''))
+                    if room not in config.data['qq_groups']['group_ids']:raise ValueError('群不在授权范围')
+                    repo=GroupKnowledge(store);account=config.data['qq']['robot_id']
+                    if path.endswith('/sources'):
+                        self.response(200,repo.sources(account,room,str(data['id']),time.time()));return
+                    repo.manage(account,room,str(data['id']),str(data['operation']),data.get('meaning'))
+                elif path == "/api/receivers":
                     if receivers is None:
                         raise ValueError("当前服务未装配ReceiverManager，请通过serve启动管理台")
                     if set(data) != {"platform", "operation"} or not all(isinstance(v,str) for v in data.values()):

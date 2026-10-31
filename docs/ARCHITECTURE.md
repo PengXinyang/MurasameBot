@@ -1,5 +1,9 @@
 # 当前架构
 
+## 群语言学习补充（2026-10-31）
+
+GroupLearning应用服务以注入仓储驱动extract/review阶段，GroupKnowledge在共同SQLite中保存有界批次、去重来源、预算和按账号/群隔离的知识。由WorkerCoordinator原memory空闲任务先执行一阶段，忙碌时让出；无新增自主循环。GroupChat仅取当前群可用表达/匹配用语，epoch和配置代际失效继续复验。GroupInbox提供近期节奏统计和有限wait重判断。
+
 ## 群自主窗口补充（2026-10-31）
 
 原QQ模块poll_private钩子冲刷GroupInbox的持久group_turns窗口，group_windows记录版本/次数，合成group_window事件进入既有events，原GroupChat处理reply/skip。没有新增循环或sender。AI从实际送入prompt的消息中选作者与消息号，选中的真实group_message作为动作来源，group_plans绑定决策窗口；最终复验当前窗口revision，新来信使旧计划失效。默认独立开关关闭，QQ/B站协议隔离及共同记忆范围保持。详见QQ_GROUP_PARTICIPATION.md。
