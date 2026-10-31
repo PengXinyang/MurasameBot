@@ -12,6 +12,8 @@ dependencies = ["httpx[socks]>=0.28,<1", "PyYAML>=6,<7", "tzdata>=2024.1", "Pill
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
 login = ["qrcode[pil]>=7.4"]
+voice = ["sounddevice>=0.5,<1"]
+call-video = ["Pillow>=11.2.1,<14", "pyvirtualcam>=0.12,<1", "numpy>=1.26,<3"]
 
 [project.scripts]
 murasame = "murasamebot.bootstrap.cli:main"

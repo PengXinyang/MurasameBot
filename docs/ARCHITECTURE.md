@@ -1,5 +1,9 @@
 # 当前架构
 
+## QQ通话媒体适配（2026-10-31）
+
+CallConversation应用服务复用MemoryService/message_decision/审核/outbox，call_message/call_reply与普通QQ文字分路、同私人会话归档。CallSessions在原SQLite记录本次会话、绑定/配置/epoch/输入修订；NativeCall只管理Windows窗口/音频/ASR/可选摄像头I/O，不含第二聊天模型循环。FrameReader向原VisionService提供当前会话内存快照。CallManager由统一ReceiverManager持有，停止QQ或退出管理台关闭媒体；旧进程未拥有媒体的会话不能续播。
+
 ## 群语言学习补充（2026-10-31）
 
 GroupLearning应用服务以注入仓储驱动extract/review阶段，GroupKnowledge在共同SQLite中保存有界批次、去重来源、预算和按账号/群隔离的知识。由WorkerCoordinator原memory空闲任务先执行一阶段，忙碌时让出；无新增自主循环。GroupChat仅取当前群可用表达/匹配用语，epoch和配置代际失效继续复验。GroupInbox提供近期节奏统计和有限wait重判断。

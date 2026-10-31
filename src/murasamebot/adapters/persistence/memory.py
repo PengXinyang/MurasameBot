@@ -83,7 +83,7 @@ class SQLiteMemory:
         db.execute("UPDATE actions SET state='cancelled' WHERE agent_id=? AND state IN ('draft','queued','reviewing') AND COALESCE(json_extract(payload,'$.memory_epoch'),-1)>=0", (self.agent_id,))
 
     def _archive_event(self, db, event, *, role="user", text=None, record_id=None, occurred_at=None):
-        if event.kind not in {"chat", "private_message", "mention", "post_mention", "reply", "group_message"}:
+        if event.kind not in {"chat", "private_message", "mention", "post_mention", "reply", "group_message", "call_message"}:
             return
         if db.execute("SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?", (self.agent_id,event.event_id)).fetchone():
             return

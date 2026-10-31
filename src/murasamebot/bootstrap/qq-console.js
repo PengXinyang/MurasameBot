@@ -2,6 +2,7 @@
 function loadQQSettings() {
   for(const n of document.querySelectorAll('[data-qq-learning]'))n.value=String(config.qq_learning[n.dataset.qqLearning]);
   const q = config.qq || {};
+  document.querySelector('#qq-call-enabled').value=String(config.qq_calls.enabled);document.querySelector('#qq-call-video').value=String(config.qq_calls.video_enabled);
   document.querySelector('#qq-enabled').value = String(config.platforms?.qq?.enabled ?? false);
   for (const key of ['quiet_seconds', 'max_wait_seconds', 'max_reply_messages']) {
     document.querySelector(`[data-qq-setting="${key}"]`).value = q[key];
@@ -156,3 +157,16 @@ function renderGroupLearning(data){
  }catch(e){notice(e.message,true)}});
 }
 emptyCopies['qq-learning-records']=['尚无语言学习记录','指定群有足量实时文字后，在空闲维护时提取和自检；观察中不代表已掌握。'];
+
+async function saveQQCalls(){try{await api('config',{qq_calls:{enabled:document.querySelector('#qq-call-enabled').value==='true',video_enabled:document.querySelector('#qq-call-video').value==='true'}});await loadConfig();notice('通话开关已保存，地址和凭证请填入本地配置');}catch(e){notice(e.message,true)}}
+async function callControl(operation){try{
+ const data={operation};
+ if(operation==='start'){data.window=Number(document.querySelector('#qq-call-window').value);data.mode=document.querySelector('#qq-call-mode').value;data.owner_confirmed=document.querySelector('#qq-call-confirmed').checked;}
+ const result=await api('qq-calls/control',data);
+ if(['start','stop','windows'].includes(operation))document.querySelector('#qq-call-confirmed').checked=false;
+ if(operation==='windows'){
+  document.querySelector('#qq-call-window').innerHTML=result.map(w=>`<option value="${w.handle}">${esc(w.title)}（${w.handle}）</option>`).join('');
+  if(!result.length)notice('未找到QQ通话窗口，请先在QQ接通',true);
+ }else if(operation==='devices')document.querySelector('#qq-call-status').textContent=result.map(d=>`${d.index} · ${d.name} · 输入${d.inputs} / 输出${d.outputs}`).join('\n');
+ else document.querySelector('#qq-call-status').textContent=`媒体：${result.active?'运行中':'已停止'}\n语音依赖：${result.audio_dependency?'已安装':'待安装 voice 可选依赖'}\n语音识别：${result.asr_configured?'已配置':'待填写地址和模型'}\nGPT-SoVITS：${result.tts_configured?'已配置':'待填写地址及服务器参考音频路径'}${result.error?'\n'+result.error:''}`;
+}catch(e){notice(e.message,true)}}

@@ -298,6 +298,11 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
             return tuple((name, module.account_id) for name, module in modules.items() if name in enabled)
         engine.routing = active_routes
         if 'qq' in modules:
+            from murasamebot.application.calls import CallConversation
+            from murasamebot.adapters.persistence.calls import CallSessions
+            from murasamebot.adapters.media.qq_calls import FrameReader
+            call_vision=VisionService(vision_settings,FrameReader(store),vision_model,store,model_name=v.get('name') or m['name'])
+            engine.event_handlers['call_message']=CallConversation(engine,CallSessions(store,config.data['owner_person_id']),config.data['qq_calls'],modules['qq'].adapter,call_vision).handle
             from murasamebot.application.group_chat import GroupChat
             from murasamebot.adapters.persistence.group_inbox import GroupInbox
             group_chat=GroupChat(engine,config.data['qq_groups'],GroupInbox(store),modules['qq'].adapter)

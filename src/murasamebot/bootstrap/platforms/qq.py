@@ -27,6 +27,10 @@ def validate(settings):
 
 class QQModule(PlatformModule):
     def guard(self,config,action,now):
+        if action.kind=='call_reply':
+            from murasamebot.adapters.persistence.calls import CallSessions
+            if not self.adapter.call_available(action.event_id):return '当前进程没有活跃通话媒体，旧会话不能续播'
+            return CallSessions(self.adapter.store,config.data['owner_person_id']).guard(action,config.data['qq_calls'],now)
         if action.kind=='group_reply':
             from murasamebot.adapters.persistence.group_inbox import GroupInbox
             return GroupInbox(self.adapter.store).guard(action,config.data['qq_groups'],now)
@@ -61,7 +65,8 @@ def build_module(config, store):
     from murasamebot.adapters.media.http_images import HTTPImageReader
     adapter = QQAdapter(config.data["qq"],store,config.data["owner_person_id"])
     adapter.group_settings=config.data['qq_groups']
-    module = QQModule("qq",adapter,frozenset({"private_reply", "task_result", "proactive_private", "autonomous_post", "group_reply"}),poll_seconds=1,
+    adapter.call_settings=config.data['qq_calls']
+    module = QQModule("qq",adapter,frozenset({"private_reply", "task_result", "proactive_private", "autonomous_post", "group_reply", "call_reply"}),poll_seconds=1,
         private_policy={"multilingual":True,"topic_filter":False},autonomy_key="qq_autonomy",
         autonomy_activity=adapter.pending_private_activity,public_autonomy_key="qq_space")
     module.private_image_reader = HTTPImageReader(hosts=IMAGE_HOSTS,referer="")

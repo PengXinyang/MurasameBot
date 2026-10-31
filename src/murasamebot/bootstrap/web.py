@@ -199,6 +199,9 @@ def handler_for(config_path: Path, token: str, *, receivers=None):
                 config = Config(config_path)
                 store = prepare_store(config)
                 path = urlparse(self.path).path
+                if path=='/api/qq-calls/control':
+                    if receivers is None:raise ValueError('请通过管理台的统一接收服务启动通话')
+                    self.response(200,receivers.call_control(data));return
                 if path in {'/api/qq-learning/manage','/api/qq-learning/sources'}:
                     from murasamebot.adapters.persistence.group_learning import GroupKnowledge
                     room=str(data.get('room',''))

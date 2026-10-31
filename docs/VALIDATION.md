@@ -1,5 +1,14 @@
 # 验证记录
 
+## 2026-10-31：QQ通话媒体与共同记忆
+
+完整回归939项中938通过、1项既有人设范围断言失败，0错误/跳过，163.54秒；通话新增25项全部通过；随后追加首个音频块写入故障的不确定性保护，通话相关26项全部通过。JUnit在忽略目录`.pytest-tmp/qq-calls-release.xml`，含上一任务全部25项群学习回归。唯一失败仍为test_persona_scope.py::test_character_secrets_and_owner_relationship_are_scoped_separately，未修改人设或削弱测试。原QQ/群/接收器/架构118项通过。
+
+模拟设备贯通采集/VAD/HTTP ASR/持久事件/原模型与记忆/审核/语音outbox；覆盖实际字节写入、完整/部分播放、打断/停止/解绑/配置/epoch/断窗、旧进程无媒体不续播、不退回QQ文字、设备看守、视觉服务读取内存快照及凭证配置脱敏。测试不使用真实设备或账号。无头Edge桌面1440/手机390宽3视图、开关保存/未配置ASR/TTS保持停止、中文状态与操作按钮、其他模块配置/私人计划保持通过，无JS异常或溢出，已查看截图。
+
+分析文档先于实现，见[QQ_CALLS.md](QQ_CALLS.md)；地址留空样例见[config.qq-calls.example.yml](../config.qq-calls.example.yml)。代码/模拟通过不代表原生QQ已接通、远程模型已部署、对端听到或摄像头可见；未执行真实通话/录音/播放，未安装驱动。当前手动接通后绑定媒体，不自动接听/拨号，微信未接入。
+
+
 ## 2026-10-31：群节奏/语言学习
 
 完整913项中912通过、1项既有人设范围断言失败，0错误/跳过，152.30秒，JUnit位于`.pytest-tmp/group-learning-release.xml`。随后将学习缓存独立于短回复窗口，追加1项回归，新增25项及新旧群99项均通过；原群/架构79项通过。人设与B站适配器未改动，唯一全量失败仍是test_persona_scope.py::test_character_secrets_and_owner_relationship_are_scoped_separately。

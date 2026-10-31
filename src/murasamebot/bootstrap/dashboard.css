@@ -64,3 +64,5 @@
 #social-records details{margin:12px 0;color:var(--muted)}
 #social-records blockquote{margin:10px 0;padding:10px 14px;border-left:3px solid #bfd3b2;background:#f5f8f0;border-radius:0 8px 8px 0;white-space:pre-wrap}
 #social-records .item button{margin:5px 6px 0 0}
+
+.call-confirmation{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.6;margin:16px 0}.call-confirmation input[type=checkbox]{width:18px;min-width:18px;height:18px;min-height:18px;padding:0;margin-top:2px}.call-buttons{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.call-buttons button{flex:1 1 130px;min-width:110px;white-space:normal;word-break:normal}

@@ -15,6 +15,7 @@ from murasamebot.application.settings import Behaviour
 from murasamebot.application.memory import MemorySettings
 from murasamebot.application.group_chat import DEFAULTS as GROUP_DEFAULTS
 from murasamebot.application.group_learning import DEFAULTS as LEARNING_DEFAULTS
+from murasamebot.application.calls import DEFAULTS as CALL_DEFAULTS
 from murasamebot.application.autonomy import AutonomySettings
 from murasamebot.application.social import SocialSettings
 from murasamebot.application.owner_history import OwnerHistorySettings
@@ -93,7 +94,7 @@ class Config:
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_space":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_autonomy":{**asdict(AutonomySettings()),"daily_decision_limit":32,"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
-                     "qq_groups":GROUP_DEFAULTS,"qq_learning":LEARNING_DEFAULTS,
+                     "qq_calls":CALL_DEFAULTS,"qq_groups":GROUP_DEFAULTS,"qq_learning":LEARNING_DEFAULTS,
                      "limits":{"event_retry_seconds":60},
                      "browsing":{"recommendation_only":True,"min_video_views":8000,"min_video_comments":20},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
@@ -188,6 +189,8 @@ class Config:
         validate_groups(data.get('qq_groups',GROUP_DEFAULTS))
         from murasamebot.application.group_learning import validate as validate_learning
         validate_learning(data.get('qq_learning',LEARNING_DEFAULTS))
+        from murasamebot.application.calls import validate as validate_calls
+        validate_calls(data.get('qq_calls',CALL_DEFAULTS))
         validate_autonomy(data.get("qq_autonomy", {}))
         validate_autonomy(data.get("qq_space", {}))
         if data["qq_space"]["private_enabled"]:
@@ -437,6 +440,8 @@ class Config:
         for key in ("access_token", "callback_secret"):
             if "qq" in data:
                 data["qq"][key] = "已配置" if data["qq"].get(key) else "未配置"
+        for key in ('asr_key','tts_key'):
+            data['qq_calls'][key]='已配置' if data['qq_calls'].get(key) else '未配置'
         data["model"]["api_key"] = "已配置" if data["model"].get("api_key") else "未配置"
         if "vision" in data:
             data["vision"]["api_key"] = "已配置" if data["vision"].get("api_key") else "复用主模型服务或未配置"
@@ -467,7 +472,7 @@ class Config:
         patch = deepcopy(patch)
         if "proxy_url" in patch.get("network", {}) and patch["network"]["proxy_url"] == self.public().get("network", {}).get("proxy_url"):
             patch["network"]["proxy_url"] = self.raw.get("network", {}).get("proxy_url", "")
-        allowed = {"qq_learning", "qq_groups", "qq_space", "qq_autonomy", "qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
+        allowed = {"qq_calls", "qq_learning", "qq_groups", "qq_space", "qq_autonomy", "qq", "platforms", "social", "requests", "owner_history", "autonomy", "mode", "paused", "timezone", "browsing", "limits", "network", "artwork", "bilibili", "vision", "engagement", "processing", "model", "expressions", "memory", "review"}
         if set(patch) - allowed:
             raise ValueError("该接口只允许修改运行设置")
         if not isinstance(patch.get("qq",{}),dict) or set(patch.get("qq",{})) - {"quiet_seconds","max_wait_seconds","max_reply_messages"}:
@@ -486,6 +491,7 @@ class Config:
             raise ValueError("未知的表情设置")
         if set(patch.get("bilibili", {})) - {"private_poll_seconds", "owner_new_videos", "owner_new_dynamics", "repost_owner_videos", "repost_owner_dynamics", "private_messages_enabled", "reply_poll_seconds", "poll_seconds", "read_video_subtitles", "inbox_batch_limit", "notification_pages", "private_session_pages", "private_message_pages"}:
             raise ValueError("登录信息请在本地私密配置中管理")
+        if not isinstance(patch.get('qq_calls',{}),dict) or set(patch.get('qq_calls',{}))-{'enabled','video_enabled'}:raise ValueError('通话服务密钥、地址和设备请写入本地私密配置')
         candidate = merge(self.raw, patch)
         self.validate(candidate)
         current = yaml.safe_load(self.local_path.read_text(encoding="utf-8")) if self.local_path.exists() else {}

@@ -100,7 +100,23 @@ class QQAdapter:
             return {"pending": 1, "last_at": now}
         return ChatBatches(self.store).activity(account_id, peer_id, binding["version"], now)
 
+    def call_available(self,event_id):
+        from murasamebot.adapters.persistence.calls import CallSessions
+        from murasamebot.adapters.media.qq_calls import lookup
+        session=CallSessions(self.store,self.owner).for_event(event_id)
+        io=lookup(self.store,session['id']) if session else None
+        return bool(io and io.alive(True))
+
     def send(self, action, mentions, *, before_write=None):
+        if action.kind=='call_reply':
+            from murasamebot.adapters.persistence.calls import CallSessions
+            from murasamebot.adapters.media.qq_calls import lookup
+            repo=CallSessions(self.store,self.owner)
+            if repo.guard(action,getattr(self,'call_settings',{'enabled':False}),time.time()) or not self.allows_private_reply(action.account_id,action.recipient_id):return Receipt('failed',detail='通话授权失效')
+            row=repo.for_event(action.event_id);io=lookup(self.store,row['id'])
+            def final_gate():
+                return self.allows_private_reply(action.account_id,action.recipient_id) and (before_write is None or before_write())
+            return io.send(action,final_gate) if io else Receipt('failed',detail='通话媒体不在当前管理台进程中，不能退回普通私聊发送')
         if action.kind=='group_reply':
             from murasamebot.adapters.persistence.group_inbox import GroupInbox
             if (action.platform!='qq' or action.account_id!=self.account_id or mentions

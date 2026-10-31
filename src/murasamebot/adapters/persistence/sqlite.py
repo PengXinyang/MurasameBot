@@ -418,7 +418,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             if action.kind=="task_result" and db.execute("SELECT 1 FROM actions WHERE agent_id=? AND dedup_key=? AND state IN ('draft','queued','reviewing','sending','accepted','unknown') AND (expires_at>? OR state IN ('sending','accepted','unknown'))",(self.agent_id,action.dedup_key,now)).fetchone():
                 return False
             content_key = action.content.key if action.content else f"{action.platform}:conversation:{action.conversation_id}"
-            if action.kind not in {"reply", "private_reply", "task_result", "autonomous_post", "proactive_private", "group_reply"}:
+            if action.kind not in {"reply", "private_reply", "task_result", "autonomous_post", "proactive_private", "group_reply", "call_reply"}:
                 if action.kind == "browse_reply":
                     exists = db.execute("SELECT 1 FROM actions WHERE agent_id=? AND dedup_key=? AND (state IN ('accepted','unknown','sending','reviewing') OR (state IN ('draft','queued') AND expires_at>?))", (self.agent_id, action.dedup_key, now)).fetchone()
                     if exists:

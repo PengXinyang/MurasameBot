@@ -1,0 +1,16 @@
+# Merge into config.local.yml; fill locally. No real account, endpoint or secret.
+qq_calls:
+  enabled: false
+  video_enabled: false
+  capture_device: ""
+  playback_device: ""
+  asr_url: ""
+  asr_key: ""
+  asr_model: ""
+  tts_url: ""
+  tts_key: ""
+  ref_audio_path: ""
+  prompt_text: ""
+  prompt_lang: zh
+  text_lang: zh
+  avatar_image: ""

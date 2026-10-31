@@ -44,6 +44,7 @@ def default_receivers():
 
 class ReceiverManager:
     def __init__(self, path, *, registry=None, worker_target=None):
+        self.calls=None
         self.path = path
         self.registry = default_receivers() if registry is None else dict(registry)
         if worker_target is None:
@@ -98,6 +99,7 @@ class ReceiverManager:
             self.worker.start()
 
     def _stop(self, name):
+        if name=="qq" and self.calls:self.calls.close()
         self.active.discard(name)
         receiver = self.receivers.pop(name, None)
         if receiver:
@@ -128,6 +130,13 @@ class ReceiverManager:
                     self._stop(name)
             if failures:
                 raise ValueError("；".join(failures)) from None
+
+    def call_control(self,data):
+        with self.lock:
+            if self.calls is None:
+                from murasamebot.bootstrap.qq_calls import CallManager
+                self.calls=CallManager(self.path,self.worker_config)
+            return self.calls.control(data)
 
     def control(self, name, operation):
         if name not in self.registry or operation not in {"start", "stop"}:
@@ -169,6 +178,7 @@ class ReceiverManager:
                     "platforms": platforms}
 
     def close(self):
+        if self.calls:self.calls.close()
         with self.lock:
             self.closed = True
             self.stop.set()
