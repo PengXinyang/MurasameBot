@@ -85,6 +85,7 @@ def handler_for(path):
                     raise ValueError("invalid event")
                 store = prepare_store(config)
                 adapter = QQAdapter(config.data["qq"],store,config.data["owner_person_id"])
+                adapter.group_settings=config.data['qq_groups']
                 event = adapter.parse(payload)
                 if event:
                     binding = store.binding(config.data["owner_person_id"],"qq")

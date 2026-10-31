@@ -15,7 +15,17 @@ function loadQQSettings() {
     node.value = key === 'windows' ? value.map(w => w.start+'-'+w.end).join('\n')
       : key === 'weekdays' ? value.join(',') : key === 'topics' ? value.join('\n') : String(value);
   }
+  for(const node of document.querySelectorAll('[data-qq-group]')){
+    const key=node.dataset.qqGroup,value=config.qq_groups[key];node.value=key==='group_ids'?value.join(','):String(value);
+  }
+
 }
+
+async function saveQQGroups(){try{
+ const settings=Object.fromEntries([...document.querySelectorAll('[data-qq-group]')].map(n=>[n.dataset.qqGroup,
+  n.dataset.qqGroup==='group_ids'?n.value.split(/[,，\s]+/).filter(Boolean):n.type==='number'?Number(n.value):n.value==='true']));
+ await api('config',{qq_groups:settings});await loadConfig();await refresh();notice('群聊设置已保存；仅在指定群被@或引用丛雨时接话，请保持QQ平台服务运行。');
+}catch(e){notice(e.message,true)}}
 
 async function saveQQAutonomy() {
   try {
@@ -71,6 +81,9 @@ async function checkQQConnection() {
 
 function renderQQConsole(data) {
   const connection = data.connection, buffered = data.buffered;
+  document.querySelector('#qq-group-status').textContent=config.qq_groups.enabled?'被动群聊已开启 · 指定 '+config.qq_groups.group_ids.length+' 个群；未启用自主插话或语言学习。':'被动群聊已关闭。';
+  rows('qq-group-records',data.groups?.records||[],r=>`<div class="row"><span class="pill">${esc(r.speaker_name||'群成员')} · ${esc(r.speaker_id)}</span><div class="message-body">${esc(r.text)}</div><div class="meta">群 ${esc(r.group_id)} · ${esc(time(r.occurred_at))}</div></div>`);
+
   const space = data.space?.status || {};
   document.querySelector('#qq-space-status').textContent = !config.qq_space.dynamic_enabled ? '空间自主说说已关闭。'
     : `最近判断：${space.state || '等待首次检查'}${space.planned_at ? ' · 计划时间 '+time(space.planned_at) : ''}${space.next_at ? ' · 下次检查 '+time(space.next_at) : ''}`;
@@ -101,11 +114,12 @@ function renderQQConsole(data) {
   ];
   document.querySelector('#qq-metrics').innerHTML = stats.map(([label,value]) =>
     `<div class="metric"><small>${esc(label)}</small><strong>${value}</strong></div>`).join('');
-  rows('qq-conversations', [...data.records].reverse(), r =>
+  rows('qq-conversations', [...data.records].filter(r=>r.visibility==='private').reverse(), r =>
     `<div class="row conversation-${esc(r.role)}"><span class="pill">${r.role === 'user' ? '主人' : '丛雨 · 已受理'}</span><div class="message-body">${esc(r.text)}</div><div class="meta">QQ · ${esc(time(r.occurred_at))}</div></div>`);
   rows('qq-pending-events', data.pending_events, r => {
     const event = JSON.parse(r.payload);
-    return `<div class="row"><span class="pill state-${esc(r.state)}">${esc(({pending:'等待处理',processing:'正在生成',failed:'处理失败'})[r.state])}</span><div class="message-body">${esc(event.text)}</div><div class="meta">${esc(time(event.occurred_at))} · 图片 ${event.images?.length || 0} 张${r.next_at ? ' · 下次重试 '+esc(time(r.next_at)) : ''}${r.reason ? ' · '+esc(r.reason) : ''}</div></div>`;
+    const scope=event.visibility==='group'?`群 ${esc(event.thread_root)} · ${esc(event.actor_name||event.actor_id)}（${esc(event.actor_id)}）`:'主人私聊';
+    return `<div class="row"><span class="pill state-${esc(r.state)}">${esc(({pending:'等待处理',processing:'正在生成',failed:'处理失败'})[r.state])}</span><div class="message-body">${esc(event.text)}</div><div class="meta">${scope} · ${esc(time(event.occurred_at))} · 图片 ${event.images?.length || 0} 张${r.next_at ? ' · 下次重试 '+esc(time(r.next_at)) : ''}${r.reason ? ' · '+esc(r.reason) : ''}</div></div>`;
   });
   rows('qq-actions', data.actions, renderActionRow);
   rows('qq-tasklist', data.tasks, renderTaskRow);
@@ -118,7 +132,9 @@ function renderQQConsole(data) {
 
 Object.assign(emptyCopies, {
   'qq-conversations': ['还没有QQ聊天归档', '启用接收器与工作循环后，已处理来信及被平台受理的回复会出现在这里。'],
-  'qq-pending-events': ['没有等待处理的合并消息', '连续来信会先进入静默窗口，再交给丛雨处理。'],
+  'qq-pending-events': ['没有等待处理的消息', '私聊先进入静默窗口；群聊被@或引用丛雨时进入处理队列。'],
   'qq-actions': ['还没有QQ相关发送记录', 'QQ私聊回复、视频结果及由QQ委托产生的公开投递会单独显示。'],
   'qq-tasklist': ['还没有来自QQ的视频委托', '在QQ告诉丛雨想看什么；默认回QQ，也可以明确要求在B站提及。']
 });
+
+emptyCopies['qq-group-records']=['尚无群聊归档','启用指定群后，被动接话及被平台受理的回复会在这里显示。'];

@@ -1,5 +1,9 @@
 # 当前架构
 
+## 群被动接话补充（2026-10-31）
+
+QQAdapter解析签名群事件，GroupInbox在原SQLite中保存每agent/账号/群有界上下文，仅触发事件进入原events。装配层注册通用event_handlers，GroupChat通过注入的群上下文仓储/群访问接口生成group_reply，不在共享应用中引入OneBot协议或HTTP。仍由唯一协调器/模型预算/审核/outbox及串行sender执行；QQModule与最终适配器复查配置/来源/成员。群档案进入同库group_dialogue，普通消息仅缓存；不复制内核、不建群微服务、不改B站协议。公开发帖和主人私人记忆检索均排除群范围。详见[群聊说明](QQ_GROUP_CHAT.md)。
+
 2026-10-31平台生命周期补充：管理台装配`bootstrap/receivers.py:ReceiverManager`，统一管理QQ长期HTTP接收器与原B站轮询的启停，复用唯一worker_loop/WorkerCoordinator。运行配置按当前进程选择过滤，协调任务和最终发送门禁重新读取；操作系统文件锁防同agent/数据库的CLI与管理台重复worker。NapCat独立，原独立命令兼容。详见[平台服务](PLATFORM_SERVICES.md)。
 
 

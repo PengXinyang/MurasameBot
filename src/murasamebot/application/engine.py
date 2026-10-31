@@ -49,6 +49,7 @@ class SocialEngine:
                  vision: VisionService | None = None, expressions: ExpressionService | None = None,
                  memory: MemoryService | None = None, owner_activity=None):
         self.request_route = None
+        self.event_handlers = {}
         self.content_urls = {}
         self.routing = None  # Optional composition-owned platform/account routes.
         self.owner_activity = owner_activity
@@ -163,7 +164,9 @@ class SocialEngine:
             return False
         try:
             person = self.store.resolve_person(event.platform, event.actor_id)
-            if event.kind == "private_message":
+            if event.kind in self.event_handlers:
+                self.event_handlers[event.kind](event,person,now)
+            elif event.kind == "private_message":
                 if self._private_message(event, person, now) is False:
                     self.store.finish_event(event.event_id,"denied")
                     return True
@@ -878,7 +881,7 @@ class SocialEngine:
                      (event and self.store.resolve_person(event.platform, event.actor_id) == self.settings.owner_person_id))
         try:
             result = self.model.decide("review_action", {
-                "persona": self.persona.prompt(owner, private=action.visibility == "private"), "proposed_text": action.text,
+                "persona": self.persona.prompt(owner and action.visibility != "group", private=action.visibility == "private"), "proposed_text": action.text,
                 "channel": "private" if action.visibility == "private" else "public", "action_kind": action.kind,
                 "private_policy":dict(self.private_policies.get(action.platform,{})) if action.visibility=="private" else {},
                 "owner_addressed": owner, "source_message": event.text if event and (event.visibility != "private" or action.visibility == "private") else None,

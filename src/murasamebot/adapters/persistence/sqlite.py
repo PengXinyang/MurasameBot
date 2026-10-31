@@ -329,6 +329,8 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
         if not row:
             return
         self._invalidate_memory_sources(db,[event_id])
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='group_inbox'").fetchone():
+            db.execute('DELETE FROM group_inbox WHERE agent=? AND id=?',(self.agent_id,event_id))
         # Tombstone the source so replay cannot recreate derived memories or tasks.
         db.execute("UPDATE memories SET active=0,text='[已删除]' WHERE agent_id=? AND event_id=?", (self.agent_id, row[0]))
         db.execute("UPDATE events SET state='deleted',payload=json_set(payload,'$.text','[已删除]') WHERE agent_id=? AND event_id=?", (self.agent_id, row[0]))
@@ -416,7 +418,7 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             if action.kind=="task_result" and db.execute("SELECT 1 FROM actions WHERE agent_id=? AND dedup_key=? AND state IN ('draft','queued','reviewing','sending','accepted','unknown') AND (expires_at>? OR state IN ('sending','accepted','unknown'))",(self.agent_id,action.dedup_key,now)).fetchone():
                 return False
             content_key = action.content.key if action.content else f"{action.platform}:conversation:{action.conversation_id}"
-            if action.kind not in {"reply", "private_reply", "task_result", "autonomous_post", "proactive_private"}:
+            if action.kind not in {"reply", "private_reply", "task_result", "autonomous_post", "proactive_private", "group_reply"}:
                 if action.kind == "browse_reply":
                     exists = db.execute("SELECT 1 FROM actions WHERE agent_id=? AND dedup_key=? AND (state IN ('accepted','unknown','sending','reviewing') OR (state IN ('draft','queued') AND expires_at>?))", (self.agent_id, action.dedup_key, now)).fetchone()
                     if exists:
@@ -450,6 +452,14 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             row = db.execute("SELECT state,payload FROM events WHERE agent_id=? AND event_id=?", (self.agent_id, action.event_id)).fetchone()
             if not row or row[0] == "deleted":
                 return "source_deleted"
+        if action.kind=='group_reply':
+            if not action.event_id or action.memory_epoch<0:return 'group_source_missing'
+            source=Event.from_dict(json.loads(row['payload']))
+            if (source.kind!='group_message' or source.visibility!='group' or action.visibility!='group'
+                    or source.account_id!=action.account_id or source.platform!=action.platform
+                    or source.actor_id!=action.recipient_id or source.conversation_id!=action.conversation_id
+                    or str(source.sequence)!=action.reply_to or source.sequence!=action.source_sequence
+                    or not source.thread_root or action.content or action.mentions):return 'group_route_mismatch'
         if action.kind == "private_reply":
             if not action.event_id:
                 return "private_source_missing"

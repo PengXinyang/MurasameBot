@@ -27,7 +27,7 @@ class SQLiteConsole:
             actions = [dict(r) for r in db.execute("SELECT a.* " + action_from + " ORDER BY a.created_at DESC,a.action_id LIMIT ?",(*args,limit))]
             action_counts = dict(db.execute("SELECT a.state,COUNT(*) " + action_from + " GROUP BY a.state",args))
             records = [dict(r) for r in db.execute("""SELECT * FROM conversation_records
-                WHERE agent_id=? AND platform=? AND active=1 ORDER BY occurred_at DESC,record_id DESC LIMIT ?""",
+                WHERE agent_id=? AND platform=? AND active=1 AND visibility!='group' ORDER BY occurred_at DESC,record_id DESC LIMIT ?""",
                 (self.agent_id,platform,limit))]
             pending = [dict(r) for r in db.execute("""SELECT event_id,payload,state,attempts,next_at,reason FROM events
                 WHERE agent_id=? AND json_extract(payload,'$.platform')=? AND state IN ('pending','processing','failed')

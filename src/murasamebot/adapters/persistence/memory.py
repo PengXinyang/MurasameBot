@@ -83,7 +83,7 @@ class SQLiteMemory:
         db.execute("UPDATE actions SET state='cancelled' WHERE agent_id=? AND state IN ('draft','queued','reviewing') AND COALESCE(json_extract(payload,'$.memory_epoch'),-1)>=0", (self.agent_id,))
 
     def _archive_event(self, db, event, *, role="user", text=None, record_id=None, occurred_at=None):
-        if event.kind not in {"chat", "private_message", "mention", "post_mention", "reply"}:
+        if event.kind not in {"chat", "private_message", "mention", "post_mention", "reply", "group_message"}:
             return
         if db.execute("SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?", (self.agent_id,event.event_id)).fetchone():
             return
@@ -94,7 +94,7 @@ class SQLiteMemory:
             return
         person = db.execute("SELECT person_id FROM bindings WHERE agent_id=? AND platform=? AND external_id=? AND active=1", (self.agent_id,event.platform,event.actor_id)).fetchone()
         person = person[0] if person else f"unlinked:{event.platform}:{event.actor_id}"
-        purpose = "private_dialogue" if event.visibility == "private" else "public_dialogue"
+        purpose = "private_dialogue" if event.visibility == "private" else "group_dialogue" if event.visibility == "group" else "public_dialogue"
         db.execute("INSERT OR IGNORE INTO conversation_records VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
                    (self.agent_id,record_id or stable_id(self.agent_id,"record",event.event_id),event.event_id,person,
                     f"conversation:{event.platform}:{event.conversation_id}",purpose,event.platform,event.account_id,

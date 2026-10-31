@@ -26,6 +26,11 @@ def validate(settings):
 
 
 class QQModule(PlatformModule):
+    def guard(self,config,action,now):
+        if action.kind=='group_reply':
+            from murasamebot.adapters.persistence.group_inbox import GroupInbox
+            return GroupInbox(self.adapter.store).guard(action,config.data['qq_groups'],now)
+        return ''
     def poll_private(self, runtime, now):
         from murasamebot.adapters.persistence.chat_batches import ChatBatches
         ChatBatches(runtime.store).flush(self.adapter.settings, runtime.config.data["owner_person_id"], self.normalize_event, now)
@@ -33,6 +38,13 @@ class QQModule(PlatformModule):
 
 def prepare_state(config, store):
     from murasamebot.domain.models import stable_id
+    stamp=stable_id(config.data['qq_groups'])
+    previous=store.get_setting('qq_groups_config_stamp')
+    if stamp!=previous:
+        if previous is not None:
+            from murasamebot.adapters.persistence.group_inbox import GroupInbox
+            GroupInbox(store).reset()
+        store.set_setting('qq_groups_config_stamp',stamp)
     for key,kind in (("qq_autonomy","proactive_private"),("qq_space","autonomous_post")):
         stamp = stable_id(config.data[key])
         previous = store.get_setting(key+"_config_stamp")
@@ -46,7 +58,8 @@ def build_module(config, store):
     from murasamebot.adapters.platforms.qq import QQAdapter, IMAGE_HOSTS
     from murasamebot.adapters.media.http_images import HTTPImageReader
     adapter = QQAdapter(config.data["qq"],store,config.data["owner_person_id"])
-    module = QQModule("qq",adapter,frozenset({"private_reply", "task_result", "proactive_private", "autonomous_post"}),poll_seconds=1,
+    adapter.group_settings=config.data['qq_groups']
+    module = QQModule("qq",adapter,frozenset({"private_reply", "task_result", "proactive_private", "autonomous_post", "group_reply"}),poll_seconds=1,
         private_policy={"multilingual":True,"topic_filter":False},autonomy_key="qq_autonomy",
         autonomy_activity=adapter.pending_private_activity,public_autonomy_key="qq_space")
     module.private_image_reader = HTTPImageReader(hosts=IMAGE_HOSTS,referer="")
