@@ -1,5 +1,10 @@
 # 当前架构
 
+## 群自主窗口补充（2026-10-31）
+
+原QQ模块poll_private钩子冲刷GroupInbox的持久group_turns窗口，group_windows记录版本/次数，合成group_window事件进入既有events，原GroupChat处理reply/skip。没有新增循环或sender。AI从实际送入prompt的消息中选作者与消息号，选中的真实group_message作为动作来源，group_plans绑定决策窗口；最终复验当前窗口revision，新来信使旧计划失效。默认独立开关关闭，QQ/B站协议隔离及共同记忆范围保持。详见QQ_GROUP_PARTICIPATION.md。
+
+
 ## 群被动接话补充（2026-10-31）
 
 QQAdapter解析签名群事件，GroupInbox在原SQLite中保存每agent/账号/群有界上下文，仅触发事件进入原events。装配层注册通用event_handlers，GroupChat通过注入的群上下文仓储/群访问接口生成group_reply，不在共享应用中引入OneBot协议或HTTP。仍由唯一协调器/模型预算/审核/outbox及串行sender执行；QQModule与最终适配器复查配置/来源/成员。群档案进入同库group_dialogue，普通消息仅缓存；不复制内核、不建群微服务、不改B站协议。公开发帖和主人私人记忆检索均排除群范围。详见[群聊说明](QQ_GROUP_CHAT.md)。

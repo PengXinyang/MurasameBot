@@ -1,6 +1,7 @@
 """Bounded, account/group-scoped context in the existing agent database."""
 import json
 import time
+from dataclasses import replace
 from murasamebot.domain.models import Event, stable_id
 
 
@@ -12,6 +13,14 @@ class GroupInbox:
                 agent TEXT, id TEXT, account TEXT, room TEXT, received REAL, payload TEXT,
                 PRIMARY KEY(agent,id))''')
             db.execute('CREATE INDEX IF NOT EXISTS group_room ON group_inbox(agent,account,room,received)')
+            db.execute('''CREATE TABLE IF NOT EXISTS group_turns (
+                agent TEXT, account TEXT, room TEXT, revision INTEGER, first_at REAL,last_at REAL,next_at REAL,
+                pending TEXT, PRIMARY KEY(agent,account,room))''')
+            db.execute('''CREATE TABLE IF NOT EXISTS group_windows (
+                agent TEXT,id TEXT,account TEXT,room TEXT,revision INTEGER,created REAL,version TEXT,
+                PRIMARY KEY(agent,id))''')
+            db.execute('CREATE TABLE IF NOT EXISTS group_seen(agent TEXT,id TEXT,PRIMARY KEY(agent,id))')
+            db.execute('CREATE TABLE IF NOT EXISTS group_plans(agent TEXT,action TEXT,window TEXT,PRIMARY KEY(agent,action))')
         self.sync_revision()
 
     def sync_revision(self):
@@ -26,15 +35,62 @@ class GroupInbox:
             db.execute('DELETE FROM group_inbox WHERE agent=? AND received<?',(self.store.agent_id,now-settings['context_minutes']*60))
             if db.execute('SELECT 1 FROM memory_suppressed WHERE agent_id=? AND event_id=?',(self.store.agent_id,event.event_id)).fetchone():
                 return False
+            if settings.get('autonomous_enabled',False) and db.execute('SELECT 1 FROM group_seen WHERE agent=? AND id=?',(self.store.agent_id,event.event_id)).fetchone():return False
             inserted=db.execute('INSERT OR IGNORE INTO group_inbox VALUES(?,?,?,?,?,?)',
                 (self.store.agent_id,event.event_id,event.account_id,event.thread_root,now,json.dumps(event.to_dict(),ensure_ascii=False))).rowcount
             if inserted and triggered:
                 db.execute("INSERT OR IGNORE INTO events(agent_id,event_id,payload,state) VALUES(?,?,?,'pending')",
                     (self.store.agent_id,event.event_id,json.dumps(event.to_dict(),ensure_ascii=False)))
+            fresh=db.execute('INSERT OR IGNORE INTO group_seen VALUES(?,?)',(self.store.agent_id,event.event_id)).rowcount
+            if inserted and fresh and settings.get('autonomous_enabled',False):
+                db.execute('''INSERT INTO group_turns VALUES(?,?,?,?,?,?,?,?)
+                    ON CONFLICT(agent,account,room) DO UPDATE SET revision=revision+1,
+                    first_at=COALESCE(first_at,excluded.first_at),last_at=excluded.last_at''',
+                    (self.store.agent_id,event.account_id,event.thread_root,1,now,now,0,None))
             db.execute('''DELETE FROM group_inbox WHERE agent=? AND account=? AND room=? AND id NOT IN
                 (SELECT id FROM group_inbox WHERE agent=? AND account=? AND room=? ORDER BY received DESC,rowid DESC LIMIT ?)''',
                 (self.store.agent_id,event.account_id,event.thread_root,self.store.agent_id,event.account_id,event.thread_root,settings['context_messages']))
             return bool(inserted)
+
+    def flush(self,settings,now):
+        """Create at most one durable decision per dirty group window, never a new AI loop."""
+        self.sync_revision()
+        if not settings['enabled'] or not settings['autonomous_enabled']:return 0
+        count=0
+        with self.store.transaction() as db:
+            turns=db.execute('SELECT * FROM group_turns WHERE agent=? AND first_at IS NOT NULL',(self.store.agent_id,)).fetchall()
+            for t in turns:
+                if t['room'] not in settings['group_ids'] or now<t['next_at']:continue
+                if now<min(t['last_at']+settings['quiet_seconds'],t['first_at']+settings['max_wait_seconds']):continue
+                if t['pending'] and db.execute("SELECT 1 FROM events WHERE agent_id=? AND event_id=? AND state IN ('pending','processing')",(self.store.agent_id,t['pending'])).fetchone():continue
+                args=(self.store.agent_id,t['account'],t['room'])
+                used=db.execute('SELECT COUNT(*) FROM group_windows WHERE agent=? AND account=? AND room=? AND created>=?',(*args,now-86400)).fetchone()[0]
+                if used>=settings['daily_decision_limit']:continue
+                row=db.execute('SELECT payload FROM group_inbox WHERE agent=? AND account=? AND room=? AND received>=? ORDER BY received DESC,rowid DESC LIMIT 1',(*args,now-settings['context_minutes']*60)).fetchone()
+                if not row:continue
+                event=Event.from_dict(json.loads(row[0]))
+                # Unknown sends block this group before spending another model call.
+                if db.execute("SELECT 1 FROM actions WHERE agent_id=? AND kind='group_reply' AND json_extract(payload,'$.conversation_id')=? AND (state='unknown' OR (state IN ('accepted','sending') AND COALESCE(sent_at,created_at)>?))",(self.store.agent_id,event.conversation_id,now-settings['cooldown_seconds'])).fetchone():continue
+                key=stable_id('group-window',self.store.agent_id,*args[1:],t['revision'],event.event_id,settings,self.store.get_setting('memory_epoch',0))
+                window=replace(event,event_id=key,kind='group_window',text='',reply_to='')
+                db.execute('INSERT OR IGNORE INTO group_windows VALUES(?,?,?,?,?,?,?)',(*args[:1],key,*args[1:],t['revision'],now,stable_id(settings)))
+                db.execute("INSERT OR IGNORE INTO events(agent_id,event_id,payload,state) VALUES(?,?,?,'pending')",(self.store.agent_id,key,json.dumps(window.to_dict(),ensure_ascii=False)))
+                db.execute('UPDATE group_turns SET first_at=NULL,next_at=?,pending=? WHERE agent=? AND account=? AND room=?',(now+settings['decision_interval_seconds'],key,*args))
+                count+=1
+        return count
+
+    def valid_window(self,window,settings):
+        if not settings['enabled'] or not settings['autonomous_enabled']:return False
+        with self.store.connection() as db:
+            row=db.execute('''SELECT w.version,w.room,w.created FROM group_windows w JOIN group_turns t
+                ON w.agent=t.agent AND w.account=t.account AND w.room=t.room AND w.revision=t.revision
+                WHERE w.agent=? AND w.id=?''',(self.store.agent_id,window)).fetchone()
+        return bool(row and row['version']==stable_id(settings) and row['room'] in settings['group_ids']
+                    and row['created']>=self.store.get_setting('group_context_since',0))
+
+    def plan(self,action,window):
+        with self.store.connection() as db:
+            db.execute('INSERT OR REPLACE INTO group_plans VALUES(?,?,?)',(self.store.agent_id,action.action_id,window))
 
     def context(self,event,settings,now):
         self.sync_revision()
@@ -63,6 +119,8 @@ class GroupInbox:
                 or action.dedup_key!=stable_id(event.event_id,settings)):
             return '群聊范围、来源或配置已变化'
         with self.store.connection() as db:
+            plan=db.execute('SELECT window FROM group_plans WHERE agent=? AND action=?',(self.store.agent_id,action.action_id)).fetchone()
+            if plan and not self.valid_window(plan[0],settings):return '群聊窗口已有新消息或已失效'
             if not db.execute('SELECT 1 FROM group_inbox WHERE agent=? AND id=? AND received>=?',
                 (self.store.agent_id,event.event_id,now-settings['context_minutes']*60)).fetchone():
                 return '群聊上下文已过期或清除'
@@ -78,5 +136,6 @@ class GroupInbox:
     def reset(self):
         with self.store.transaction() as db:
             db.execute('DELETE FROM group_inbox WHERE agent=?',(self.store.agent_id,))
+            db.execute('DELETE FROM group_turns WHERE agent=?',(self.store.agent_id,))
             db.execute("UPDATE actions SET state='cancelled' WHERE agent_id=? AND kind='group_reply' AND state IN ('draft','queued','reviewing')",(self.store.agent_id,))
         self.store.set_setting('group_context_since',time.time())

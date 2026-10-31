@@ -24,7 +24,7 @@ function loadQQSettings() {
 async function saveQQGroups(){try{
  const settings=Object.fromEntries([...document.querySelectorAll('[data-qq-group]')].map(n=>[n.dataset.qqGroup,
   n.dataset.qqGroup==='group_ids'?n.value.split(/[,，\s]+/).filter(Boolean):n.type==='number'?Number(n.value):n.value==='true']));
- await api('config',{qq_groups:settings});await loadConfig();await refresh();notice('群聊设置已保存；仅在指定群被@或引用丛雨时接话，请保持QQ平台服务运行。');
+ await api('config',{qq_groups:settings});await loadConfig();await refresh();notice('群聊设置已保存；请保持QQ平台服务运行，自主参与由独立开关控制。');
 }catch(e){notice(e.message,true)}}
 
 async function saveQQAutonomy() {
@@ -81,7 +81,7 @@ async function checkQQConnection() {
 
 function renderQQConsole(data) {
   const connection = data.connection, buffered = data.buffered;
-  document.querySelector('#qq-group-status').textContent=config.qq_groups.enabled?'被动群聊已开启 · 指定 '+config.qq_groups.group_ids.length+' 个群；未启用自主插话或语言学习。':'被动群聊已关闭。';
+  document.querySelector('#qq-group-status').textContent=config.qq_groups.enabled?'群聊已开启 · 指定 '+config.qq_groups.group_ids.length+' 个群 · '+(config.qq_groups.autonomous_enabled?'自主判断接话或旁观':'仅被@或引用时回复')+'；未启用语言学习。':'被动群聊已关闭。';
   rows('qq-group-records',data.groups?.records||[],r=>`<div class="row"><span class="pill">${esc(r.speaker_name||'群成员')} · ${esc(r.speaker_id)}</span><div class="message-body">${esc(r.text)}</div><div class="meta">群 ${esc(r.group_id)} · ${esc(time(r.occurred_at))}</div></div>`);
 
   const space = data.space?.status || {};
@@ -119,7 +119,7 @@ function renderQQConsole(data) {
   rows('qq-pending-events', data.pending_events, r => {
     const event = JSON.parse(r.payload);
     const scope=event.visibility==='group'?`群 ${esc(event.thread_root)} · ${esc(event.actor_name||event.actor_id)}（${esc(event.actor_id)}）`:'主人私聊';
-    return `<div class="row"><span class="pill state-${esc(r.state)}">${esc(({pending:'等待处理',processing:'正在生成',failed:'处理失败'})[r.state])}</span><div class="message-body">${esc(event.text)}</div><div class="meta">${scope} · ${esc(time(event.occurred_at))} · 图片 ${event.images?.length || 0} 张${r.next_at ? ' · 下次重试 '+esc(time(r.next_at)) : ''}${r.reason ? ' · '+esc(r.reason) : ''}</div></div>`;
+    return `<div class="row"><span class="pill state-${esc(r.state)}">${esc(({pending:'等待处理',processing:'正在生成',failed:'处理失败'})[r.state])}</span><div class="message-body">${esc(event.text || (event.kind==='group_window'?'群讨论窗口：判断接话或旁观':''))}</div><div class="meta">${scope} · ${esc(time(event.occurred_at))} · 图片 ${event.images?.length || 0} 张${r.next_at ? ' · 下次重试 '+esc(time(r.next_at)) : ''}${r.reason ? ' · '+esc(r.reason) : ''}</div></div>`;
   });
   rows('qq-actions', data.actions, renderActionRow);
   rows('qq-tasklist', data.tasks, renderTaskRow);

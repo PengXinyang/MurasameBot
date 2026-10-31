@@ -300,7 +300,8 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
         if 'qq' in modules:
             from murasamebot.application.group_chat import GroupChat
             from murasamebot.adapters.persistence.group_inbox import GroupInbox
-            engine.event_handlers['group_message']=GroupChat(engine,config.data['qq_groups'],GroupInbox(store),modules['qq'].adapter).handle
+            group_chat=GroupChat(engine,config.data['qq_groups'],GroupInbox(store),modules['qq'].adapter)
+            engine.event_handlers.update(group_message=group_chat.handle,group_window=group_chat.handle)
         from murasamebot.application.autonomy import AutonomySettings, AutonomyTarget
         engine.autonomy.targets = tuple(AutonomyTarget(name,module.account_id,
             replace(AutonomySettings.from_config(config.data[module.autonomy_key]),

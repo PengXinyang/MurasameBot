@@ -1,5 +1,14 @@
 # 验证记录
 
+## 2026-10-31：群聊自主参与窗口
+
+最终全量889项中888通过、1项既有人设范围断言失败，0错误/跳过，151.76秒；新增20项全部通过，新旧群相关74项通过。JUnit在忽略目录`.pytest-tmp/group-participation-release.xml`。唯一失败仍是test_persona_scope.py::test_character_secrets_and_owner_relationship_are_scoped_separately；B站适配器和人设文件未修改，未削弱测试。
+
+覆盖选择较早发言者和准确作者归因、窗口外/自身/错配对象拒绝、skip、上下文限量、静默/最长等待、每群单个在途窗口、生成/排队/最终写入前新消息失效、持久间隔与24小时判断额度、按群隔离、模式/记忆变化、重开ID不碰撞与历史重复不触发。管理台无头Edge桌面1440/手机390宽3视图、参数/自主开关保存回读、私聊/空间/B站配置与私人待发计划保持、昵称转义通过，无JS异常或横向溢出，截图已查看。
+
+仅模拟OneBot/模型及隔离库和回环服务，未改正式配置或发送真实群消息。真实节奏、可见性和措辞自然度待群验收。配置见[QQ_GROUP_PARTICIPATION.md](QQ_GROUP_PARTICIPATION.md)。
+
+
 ## 2026-10-31：QQ指定群被动接话
 
 最终完整869项中868通过、1项既有人设范围断言失败，0错误/跳过，143.93秒；新增54项全部通过。JUnit位于忽略目录`.pytest-tmp/qq-groups-release.xml`。原QQ/接收器/平台66项通过，群与旧代理/视频配置108项通过。首次全量发现旧无qq_groups配置的直接校验不兼容，已修复后完整复跑；未改变既有人设文件或削弱其测试。唯一失败为test_persona_scope.py::test_character_secrets_and_owner_relationship_are_scoped_separately，与任务前相同。

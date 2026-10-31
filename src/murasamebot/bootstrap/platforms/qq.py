@@ -32,6 +32,8 @@ class QQModule(PlatformModule):
             return GroupInbox(self.adapter.store).guard(action,config.data['qq_groups'],now)
         return ''
     def poll_private(self, runtime, now):
+        from murasamebot.adapters.persistence.group_inbox import GroupInbox
+        GroupInbox(runtime.store).flush(runtime.config.data["qq_groups"],now)
         from murasamebot.adapters.persistence.chat_batches import ChatBatches
         ChatBatches(runtime.store).flush(self.adapter.settings, runtime.config.data["owner_person_id"], self.normalize_event, now)
 

@@ -194,7 +194,7 @@ class QQAdapter:
             reply_to=reply,thread_root=group,actor_name=str(sender.get('card') or sender.get('nickname') or '')[:120],sequence=mid)
         quote=self.group_quote(group,reply) if reply and self.account_id not in ats else None
         triggered=self.account_id in ats or bool(quote and quote['user_id']==self.account_id)
-        GroupInbox(self.store).receive(event,triggered,s,now)
+        GroupInbox(self.store).receive(event,triggered and not s.get('autonomous_enabled',False),s,now)
         return None  # Group events are durably ingested directly, never private-batched.
 
     def check_group(self,group,peer):
