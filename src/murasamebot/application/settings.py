@@ -23,6 +23,7 @@ class Behaviour:
     reply_comments: bool = True
     recommend_owner: bool = True
     recommendation_only: bool = False
+    reactive_video_comments_only: bool = False
     min_video_views: int | None = None
     min_video_comments: int | None = None
     video_like: bool = False

@@ -23,5 +23,6 @@ config.local.yml
 # Project memory is versioned; keep local evidence and private captures outside it.
 /docs/local/
 /docs/private/
+/deploy/local/
 /docs/**/*.har
 /docs/**/*.log

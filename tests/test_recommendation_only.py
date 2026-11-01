@@ -81,7 +81,7 @@ def test_config_defaults_save_and_live_policy(tmp_path,now):
     assert not BilibiliModule("bilibili",None,frozenset()).guard(Config(config.path),replace(action,kind="reply"),now)
 
 
-@pytest.mark.parametrize("key,value", [("min_video_views",True),("min_video_comments",-1),("min_video_views",1.5),("recommendation_only","true")])
+@pytest.mark.parametrize("key,value", [("min_video_views",True),("min_video_comments",-1),("min_video_views",1.5),("recommendation_only","true"),("reactive_video_comments_only","true")])
 def test_invalid_config_rejected(tmp_path,key,value):
     config=Config(write_config(tmp_path))
     with pytest.raises(ValueError):
@@ -114,7 +114,7 @@ def test_runtime_rechecks_threshold_changes_and_mention_source(tmp_path,now):
     from murasamebot.bootstrap.runtime import build
     from murasamebot.bootstrap.platforms.bilibili import CAPABILITIES
     config=Config(write_config(tmp_path))
-    config.save_local({"mode":"auto"})
+    config.save_local({"mode":"auto","browsing":{"reactive_video_comments_only":False}})
     platform=TestPlatform()
     platform.account_id,platform.configured="robot",True
     platform.close=lambda:None

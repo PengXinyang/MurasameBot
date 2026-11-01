@@ -1,5 +1,7 @@
 # MurasameBot
 
+Docker配置已提供，入口见[Docker与NapCat部署](docs/DOCKER.md)。首次只启动管理台、平台默认关闭；容器实号运行仍待验收。
+
 当前已实现、待办与已知问题见[项目状态总览](docs/STATUS.md)；本地/模拟验收与真实账号效果分别记录。
 
 平台解耦Q0已编码：共享内核按启用模块装配，B站默认行为与协议文件保留；QQ真实连接器仍待接入。配置及扩展方法见[平台模块说明](docs/PLATFORM_MODULES.md)。

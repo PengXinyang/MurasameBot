@@ -96,7 +96,7 @@ class Config:
                      "qq_autonomy":{**asdict(AutonomySettings()),"daily_decision_limit":32,"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_calls":CALL_DEFAULTS,"qq_groups":GROUP_DEFAULTS,"qq_learning":LEARNING_DEFAULTS,
                      "limits":{"event_retry_seconds":60},
-                     "browsing":{"recommendation_only":True,"min_video_views":8000,"min_video_comments":20},
+                     "browsing":{"recommendation_only":True,"reactive_video_comments_only":True,"min_video_views":8000,"min_video_comments":20},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
                                 "gfwlist_cache":"data/gfwlist.txt", "gfwlist_refresh_hours":6,
                                 "direct_domains":list(DIRECT_DOMAINS)}},raw)
@@ -228,6 +228,8 @@ class Config:
         browse = data.get("browsing", {})
         if type(browse.get("recommendation_only",True)) is not bool:
             raise ValueError("仅推荐模式需要为布尔值")
+        if type(browse.get("reactive_video_comments_only",True)) is not bool:
+            raise ValueError("reactive_video_comments_only必须为布尔值")
         for key in ("min_video_views", "min_video_comments"):
             value = browse.get(key,8000 if key == "min_video_views" else 20)
             if type(value) is not int or not 0 <= value <= 10**12:
@@ -428,6 +430,7 @@ class Config:
                          weekdays=tuple(browse["weekdays"]), browsing_enabled=browse["enabled"],
                          allow_metadata_video=browse.get("allow_metadata_video", True),
                          recommendation_only=browse.get("recommendation_only",True),
+                         reactive_video_comments_only=browse.get("reactive_video_comments_only",True),
                          min_video_views=browse.get("min_video_views",8000),min_video_comments=browse.get("min_video_comments",20),
                          **{key: browse.get(key, True) for key in ("comment_videos", "reply_comments", "recommend_owner")},
                          **{key: self.data.get("engagement", {}).get(key, False) for key in ("video_like", "video_coin", "dynamic_like")},

@@ -1,0 +1,29 @@
+services:
+  bot:
+    build: .
+    image: murasamebot:local
+    restart: unless-stopped
+    init: true
+    environment:
+      MURASAME_OWNER_UID: ${MURASAME_OWNER_UID:-}
+      MURASAME_MODEL_BASE_URL: ${MURASAME_MODEL_BASE_URL:-}
+      MURASAME_MODEL_NAME: ${MURASAME_MODEL_NAME:-}
+      MURASAME_MODEL_API_KEY: ${MURASAME_MODEL_API_KEY:-}
+      MURASAME_VISION_BASE_URL: ${MURASAME_VISION_BASE_URL:-}
+      MURASAME_VISION_MODEL_NAME: ${MURASAME_VISION_MODEL_NAME:-}
+      MURASAME_VISION_API_KEY: ${MURASAME_VISION_API_KEY:-}
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:${MURASAME_WEB_PORT:-8766}:8766"
+    volumes:
+      - bot-state:/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  bot-state:

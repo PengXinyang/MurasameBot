@@ -1,0 +1,26 @@
+# Use together with compose.yml. Both processes intentionally share loopback.
+services:
+  bot:
+    ports:
+      - "127.0.0.1:${NAPCAT_WEB_PORT:-6099}:6099"
+  napcat:
+    image: ${NAPCAT_IMAGE:-mlikiowa/napcat-docker:latest}
+    restart: unless-stopped
+    network_mode: service:bot
+    depends_on:
+      bot:
+        condition: service_healthy
+    environment:
+      WEBUI_TOKEN: ${NAPCAT_WEBUI_TOKEN:?Set NAPCAT_WEBUI_TOKEN in local .env}
+      MODE: http
+    volumes:
+      - napcat-qq:/app/.config/QQ
+      - napcat-config:/app/napcat/config
+      - napcat-plugins:/app/napcat/plugins
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  napcat-qq:
+  napcat-config:
+  napcat-plugins:

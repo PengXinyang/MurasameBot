@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from murasamebot.application.scheduling import day_start, next_window
 from murasamebot.application.settings import Behaviour
-from murasamebot.application.recommendation_policy import popularity_allows
+from murasamebot.application.recommendation_policy import popularity_allows, reactive_video_reply
 from murasamebot.application.vision import VisionService
 from murasamebot.application.expressions import ExpressionService
 from murasamebot.application.memory import MemoryService
@@ -88,7 +88,18 @@ class SocialEngine:
         text = checked_text(text, limit, multilingual=multilingual)
         return text + "".join(e.token for e in emojis), emojis
 
+    def popularity_allowed(self, document):
+        binding = self.store.binding(self.settings.owner_person_id, document.ref.provider) if document else None
+        accounts = dict(self.routing()) if self.routing else {self.settings.platform: self.settings.account_id}
+        return popularity_allows(document, self.settings.min_video_views, self.settings.min_video_comments,
+            exempt_authors=(binding["external_id"] if binding else "", accounts.get(document.ref.provider, "") if document else ""))
+
     def enqueue_generated(self, action, result, now):
+        if (self.settings.reactive_video_comments_only and action.platform == "bilibili"
+                and action.content and action.content.kind == "video"
+                and action.kind in {"reply", "owner_comment", "browse_comment", "browse_reply", "recommendation"}
+                and not reactive_video_reply(action, self.store.event(action.event_id) if action.event_id else None)):
+            return False
         if self.social.guard(action,now):
             return False
         if action.visibility == "public" and action.content and local_topic(action.text) == "sensitive":
@@ -391,7 +402,7 @@ class SocialEngine:
             self.store.audit("topic_skipped","当前消息触发公开话题限制",now)
             return
         owner_content = event.kind == "owner_content"
-        if owner_content and self.settings.recommendation_only:
+        if owner_content and (self.settings.recommendation_only or (self.settings.reactive_video_comments_only and event.content and event.content.kind == "video")):
             self.store.audit("skipped", "仅推荐模式：不主动评论主人作品", now)
             return
         if owner_content:
@@ -401,7 +412,12 @@ class SocialEngine:
             if event.content and self.store.has_action_for_content(event.content.key, now):
                 return
         document = self.document(event.content, now, reply_to=event.reply_to, root=event.thread_root, context=event.share_content) if event.content else None
-        if document and document.ref.kind == "video" and event.kind != "mention" and not popularity_allows(document,self.settings.min_video_views,self.settings.min_video_comments):
+        reactive_video = (self.settings.reactive_video_comments_only and event.platform == "bilibili"
+                          and document and document.ref.kind == "video")
+        if reactive_video and (event.kind not in {"mention", "reply"} or not event.reply_to):
+            self.store.audit("skipped", "视频仅响应提及或回复通知，不主动评论", now)
+            return
+        if document and document.ref.kind == "video" and event.kind != "mention" and not reactive_video and not self.popularity_allowed(document):
             self.store.audit("skipped", "视频统计未达门槛；仅视频评论区直接@可豁免", now)
             return
         local = document_topic(document,event.text)
@@ -621,7 +637,7 @@ class SocialEngine:
         return route.get("mode")=="private" and self.private_policies.get(route.get("platform"),{}).get("topic_filter") is False
 
     def _evaluate(self, document: Document, now: float, task: dict | None = None, *, owner_observation=None) -> bool:
-        if not popularity_allows(document,self.settings.min_video_views,self.settings.min_video_comments):
+        if not self.popularity_allowed(document):
             self.store.record_view(document.ref,"播放量或评论数未严格超过推荐门槛，或统计缺失",now)
             return False
         if self.unfiltered_private_task(task):
@@ -634,6 +650,7 @@ class SocialEngine:
             return False
         if task and task.get("route",{}).get("mode")=="private":
             return self._private_task_result(document, task, now)
+        passive_video = self.settings.reactive_video_comments_only and document.ref.provider == "bilibili" and document.ref.kind == "video"
         # This payload is deliberately independent of the original private message.
         # Capture before preferences are read, so concurrent forgetting/correction
         # invalidates the whole decision, not just the eventual recommendation.
@@ -646,8 +663,8 @@ class SocialEngine:
             "requested_topic": task["topic"] if task else owner_observation["topic"] if owner_observation else None,
             "memory_epoch": epoch,
             "max_characters": self.settings.max_recommendation_characters if task else self.settings.max_comment_characters,
-            "comment_videos": self.settings.comment_videos and not owner_observation and not self.settings.recommendation_only, "reply_comments": self.settings.reply_comments and task is None and not owner_observation and not self.settings.recommendation_only,
-            "recommend_owner": self.settings.recommend_owner,
+            "comment_videos": self.settings.comment_videos and not owner_observation and not self.settings.recommendation_only and not passive_video, "reply_comments": self.settings.reply_comments and task is None and not owner_observation and not self.settings.recommendation_only and not passive_video,
+            "recommend_owner": self.settings.recommend_owner and not passive_video,
             "topic_owner_exception": owner,
         }, document.ref.provider, self.settings.account_id, "public", now)
         decision = result.get("decision", "skip")
@@ -675,7 +692,7 @@ class SocialEngine:
             return False
         if self.settings.recommendation_only and decision in {"comment", "reply"}:
             return False
-        if decision == "recommend" and not popularity_allows(document,self.settings.min_video_views,self.settings.min_video_comments):
+        if decision == "recommend" and not self.popularity_allowed(document):
             self.store.audit("recommendation_skipped", "视频播放量或评论数未严格超过门槛，或统计缺失", now)
             return False
         if task and decision != "recommend":
@@ -711,7 +728,7 @@ class SocialEngine:
         return self.enqueue_generated(action,result,now)
 
     def _private_task_result(self, document, task, now):
-        if not popularity_allows(document,self.settings.min_video_views,self.settings.min_video_comments):
+        if not self.popularity_allowed(document):
             return False
         route = task["route"]
         binding = self.store.binding(task["person_id"],route["platform"])

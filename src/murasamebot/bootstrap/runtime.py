@@ -237,14 +237,21 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                         or local_topic(action.text)=="sensitive"):
                     return "公开话题限制：敏感、非主人严肃话题或未完成分类；人工批准也不放行"
             if action.content and action.content.kind == "video" and action.kind in {"recommendation", "task_result", "browse_comment", "browse_reply", "owner_comment", "reply"}:
-                from murasamebot.application.recommendation_policy import popularity_allows
+                from murasamebot.application.recommendation_policy import popularity_allows, reactive_video_reply
                 browse = current.data["browsing"]
                 document = store.cached_document(action.content,now) if action.content else None
                 source_event = store.event(action.event_id) if action.event_id else None
+                if (action.platform == "bilibili" and browse.get("reactive_video_comments_only",True)
+                        and action.kind != "task_result" and not reactive_video_reply(action,source_event)):
+                    return "视频仅响应提及或回复通知，禁止主动评论（含主动@推荐）"
+                binding = store.binding(current.data["owner_person_id"], action.content.provider)
+                exempt_authors = (binding["external_id"] if binding else "", modules[action.content.provider].account_id if action.content.provider in modules else "")
+                reactive = (action.platform == "bilibili" and browse.get("reactive_video_comments_only",True)
+                            and reactive_video_reply(action,source_event))
                 explicit_mention = (action.kind == "reply" and action.visibility == "public" and source_event and source_event.kind == "mention"
                     and source_event.visibility == "public" and source_event.platform == action.platform
                     and source_event.account_id == action.account_id and source_event.content == action.content)
-                if not explicit_mention and not popularity_allows(document,browse.get("min_video_views",8000),browse.get("min_video_comments",20)):
+                if not reactive and not explicit_mention and not popularity_allows(document,browse.get("min_video_views",8000),browse.get("min_video_comments",20),exempt_authors=exempt_authors):
                     return "视频统计缺失或未超过当前推荐门槛，禁止推荐"
             if action.owner_activity_version:
                 active_history = current_history(current)

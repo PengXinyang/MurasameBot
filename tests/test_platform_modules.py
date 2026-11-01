@@ -248,7 +248,7 @@ def test_owner_new_content_comment_survives_platform_capability_gate(tmp_path, n
     from murasamebot.domain.models import Document
     from murasamebot.bootstrap.platforms.bilibili import BilibiliModule, CAPABILITIES
     config = Config(write_config(tmp_path))
-    config.save_local({"mode": "auto", "browsing": {"recommendation_only": False}})
+    config.save_local({"mode": "auto", "browsing": {"recommendation_only": False, "reactive_video_comments_only": False}})
     adapter = TestPlatform()
     adapter.account_id, adapter.configured = "robot", True
     adapter.close = lambda: None

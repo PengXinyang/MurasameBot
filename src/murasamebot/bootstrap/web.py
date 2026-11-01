@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import secrets
 import sqlite3
@@ -332,14 +333,28 @@ def serve(config_path: Path, *, with_worker=False):
     token = admin_token(config.root)
     host, port = config.data["web"]["host"], config.data["web"]["port"]
     receivers = ReceiverManager(config_path)
-    server = ThreadingHTTPServer((host, port), handler_for(config_path, token, receivers=receivers))
+    # Compose publishes only host loopback. Keep Host/Origin/token checks intact.
+    listen_host = "0.0.0.0" if os.environ.get("MURASAME_CONTAINER_BIND") == "1" else host
+    server = ThreadingHTTPServer((listen_host, port), handler_for(config_path, token, receivers=receivers))
     server.daemon_threads = True
+    previous_term = None
+    if os.environ.get("MURASAME_CONTAINER_BIND") == "1":
+        import signal
+        from threading import current_thread, main_thread
+        if current_thread() is main_thread():
+            def stop_container(signum, frame):
+                raise KeyboardInterrupt
+            previous_term = signal.signal(signal.SIGTERM, stop_container)
     print(f"本机管理台：http://{host}:{port}/#token={token}")
     print("该链接可管理本地账号，请保存在本机。" + ("已请求启动配置中的平台服务。" if with_worker else "可在运行概况中分别启动QQ与B站。"))
     try:
         if with_worker:
             receivers.start_configured()
         server.serve_forever(poll_interval=0.3)
+    except KeyboardInterrupt:
+        pass
     finally:
         receivers.close()
         server.server_close()
+        if previous_term is not None:
+            signal.signal(signal.SIGTERM, previous_term)

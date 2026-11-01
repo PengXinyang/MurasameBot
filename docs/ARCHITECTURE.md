@@ -1,5 +1,7 @@
 # 当前架构
 
+2026-11-01补充：视频被动评论与作者统计豁免在共享策略中判定，B站最终写前核对真实入站目标，兼容旧配置的新增默认见D48。容器保持同一核心和唯一worker；NapCat作为协议桥共用bot网络命名空间但独立存储，管理台监听通过镜像内显式环境变量开启，宿主回环发布，见D49和[Docker部署](DOCKER.md)。
+
 ## QQ通话媒体适配（2026-10-31）
 
 CallConversation应用服务复用MemoryService/message_decision/审核/outbox，call_message/call_reply与普通QQ文字分路、同私人会话归档。CallSessions在原SQLite记录本次会话、绑定/配置/epoch/输入修订；NativeCall只管理Windows窗口/音频/ASR/可选摄像头I/O，不含第二聊天模型循环。FrameReader向原VisionService提供当前会话内存快照。CallManager由统一ReceiverManager持有，停止QQ或退出管理台关闭媒体；旧进程未拥有媒体的会话不能续播。

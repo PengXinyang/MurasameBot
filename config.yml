@@ -147,6 +147,7 @@ browsing:
   comment_videos: true
   reply_comments: true
   recommend_owner: true
+  reactive_video_comments_only: true  # No autonomous video comments, including public owner mentions.
   recommendation_only: true  # ordinary proactive comments/replies are disabled
   min_video_views: 8000  # strict >, unknown counts cannot qualify
   min_video_comments: 20  # strict >; includes explicit tasks and private recommendations
