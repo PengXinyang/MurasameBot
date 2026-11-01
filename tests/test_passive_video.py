@@ -23,7 +23,7 @@ def test_low_volume_inbound_conversation_can_continue(factory, now, kind):
     assert store.inspect("actions")[0]["kind"] == "reply"
 
 
-@pytest.mark.parametrize("decision", ["comment", "reply", "recommend"])
+@pytest.mark.parametrize("decision", ["comment", "reply"])
 def test_no_autonomous_video_comment_even_if_legacy_switches_enabled(factory, now, decision):
     engine, store, model, platform = factory(reactive_video_comments_only=True, recommendation_only=False)
     model.evaluation.update(decision=decision, reply_to="700")
@@ -42,6 +42,22 @@ def test_source_cannot_authorize_another_target_or_missing_notification(factory,
     assert not reactive_video_reply(action,None)
 
 
+@pytest.mark.parametrize("views,comments,allowed", [(8001,21,True),(8000,21,False),(8001,20,False),
+                                                   (34,1,False),(None,30,False)])
+def test_recommendation_is_allowed_only_above_both_thresholds(factory, now, views, comments, allowed):
+    engine,store,model,platform=factory(reactive_video_comments_only=True,recommendation_only=True,
+                                      min_video_views=8000,min_video_comments=20)
+    model.evaluation.update(decision="recommend")
+    assert engine._evaluate(replace(platform.read(platform.ref),view_count=views,comment_count=comments),now) is allowed
+    actions=store.inspect("actions")
+    assert bool(actions) is allowed
+    if allowed:
+        assert actions[0]["kind"]=="recommendation"
+        payload=next(p for op,p in model.calls if op=="evaluate_video")
+        assert payload["recommend_owner"]
+        assert not payload["comment_videos"] and not payload["reply_comments"]
+
+
 def test_runtime_blocks_old_proactive_actions_but_allows_same_target_reply(tmp_path,now):
     from conftest import TestPlatform
     from murasamebot.bootstrap.config import Config
@@ -56,7 +72,11 @@ def test_runtime_blocks_old_proactive_actions_but_allows_same_target_reply(tmp_p
     try:
         runtime.store.cache_document(replace(platform.read(platform.ref),view_count=1,comment_count=0,topic_class="casual"),now)
         action=Action("a",runtime.store.agent_id,"bilibili","robot",platform.ref,"回复",now,now+60,kind="recommendation",topic_class="casual")
-        assert "禁止主动评论" in runtime.engine.action_policy(action,now)
+        assert "门槛" in runtime.engine.action_policy(action,now)
+        runtime.store.cache_document(replace(platform.read(platform.ref),view_count=8001,comment_count=21,topic_class="casual"),now)
+        assert not runtime.engine.action_policy(action,now)
+        assert "禁止主动" in runtime.engine.action_policy(replace(action,kind="browse_comment"),now)
+        runtime.store.cache_document(replace(platform.read(platform.ref),view_count=1,comment_count=0,topic_class="casual"),now)
         event=Event("in","bilibili","robot","123","thread","reply","聊聊",now,content=platform.ref,reply_to="700")
         runtime.engine.ingest(event)
         assert not runtime.engine.action_policy(replace(action,kind="reply",reply_to="700",event_id="in"),now)

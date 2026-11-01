@@ -97,7 +97,7 @@ class SocialEngine:
     def enqueue_generated(self, action, result, now):
         if (self.settings.reactive_video_comments_only and action.platform == "bilibili"
                 and action.content and action.content.kind == "video"
-                and action.kind in {"reply", "owner_comment", "browse_comment", "browse_reply", "recommendation"}
+                and action.kind in {"reply", "owner_comment", "browse_comment", "browse_reply"}
                 and not reactive_video_reply(action, self.store.event(action.event_id) if action.event_id else None)):
             return False
         if self.social.guard(action,now):
@@ -664,7 +664,7 @@ class SocialEngine:
             "memory_epoch": epoch,
             "max_characters": self.settings.max_recommendation_characters if task else self.settings.max_comment_characters,
             "comment_videos": self.settings.comment_videos and not owner_observation and not self.settings.recommendation_only and not passive_video, "reply_comments": self.settings.reply_comments and task is None and not owner_observation and not self.settings.recommendation_only and not passive_video,
-            "recommend_owner": self.settings.recommend_owner and not passive_video,
+            "recommend_owner": self.settings.recommend_owner,
             "topic_owner_exception": owner,
         }, document.ref.provider, self.settings.account_id, "public", now)
         decision = result.get("decision", "skip")

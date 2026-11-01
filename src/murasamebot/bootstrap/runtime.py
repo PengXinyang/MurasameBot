@@ -242,8 +242,9 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                 document = store.cached_document(action.content,now) if action.content else None
                 source_event = store.event(action.event_id) if action.event_id else None
                 if (action.platform == "bilibili" and browse.get("reactive_video_comments_only",True)
-                        and action.kind != "task_result" and not reactive_video_reply(action,source_event)):
-                    return "视频仅响应提及或回复通知，禁止主动评论（含主动@推荐）"
+                        and action.kind in {"reply", "browse_comment", "browse_reply", "owner_comment"}
+                        and not reactive_video_reply(action,source_event)):
+                    return "视频普通评论仅响应提及或回复通知，禁止主动接话"
                 binding = store.binding(current.data["owner_person_id"], action.content.provider)
                 exempt_authors = (binding["external_id"] if binding else "", modules[action.content.provider].account_id if action.content.provider in modules else "")
                 reactive = (action.platform == "bilibili" and browse.get("reactive_video_comments_only",True)
