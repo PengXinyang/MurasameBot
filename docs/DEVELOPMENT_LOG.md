@@ -1,5 +1,11 @@
 # 开发日志与当前状态
 
+## 2026-11-01：Windows双击部署入口
+
+用户要求一键部署，新增根目录Start-Docker.cmd和公共deploy/start-docker.ps1；本机忽略目录的旧start.ps1改为委托公共脚本。检查已填写的私密配置和NapCat账号文件、Docker Compose，支持ValidateOnly不启动；正常模式确认Linux Engine、必要时查找并隐藏启动Docker Desktop，随后使用同一组私密env/三份Compose执行up -d --build。等待管理HTTP就绪、仅接受宿主回环发布端口、从容器读取本地管理token并打开两页，支持NoBrowser；失败停止，不启动worker或自动完成扫码，不覆盖密钥/配置、不迁移旧数据库。
+
+Windows PowerShell下5项模拟启动流程及原容器两项共7通过，6.83秒；覆盖校验无副作用、完整假部署打开本机页、Engine未就绪时启动Desktop、Windows Engine及构建失败不继续。模拟通过函数替身，不启动Docker/浏览器或访问账户。实际CMD入口以-ValidateOnly及NUL输入执行通过，已填Compose解析成功；脚本/差异检查通过。没有执行真实构建/容器启动/扫码或社交动作，不把模拟称为已完成Docker实机部署；只改启动胶水与说明，不重复业务完整套件。README/DOCKER同步，保留本地私密包和角色备份，不上传其中任何值。
+
 ## 2026-11-01：本机Docker私密部署配置准备
 
 按用户要求从现有有效本地配置整理独立部署包到Git/构建上下文均忽略的deploy/local，未覆盖根目录.env或config.local.yml。模型、两平台账号/主人绑定与现有OneBot两项密钥已沿用；生成独立NapCat管理密码，按上游OneBot schema和账号配置命名方式预置HTTP API与签名上报，array格式、不上报自身发言。容器访问宿主的代理/模型回环地址作相应转换，国内直连/GFWList保留；通过仅本地覆盖文件挂载可写工作区与NapCat配置，准备PowerShell启动脚本和私密说明。

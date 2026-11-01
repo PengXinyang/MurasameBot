@@ -14,6 +14,8 @@
 
 ## 首次启动
 
+Windows当前本机已填好deploy/local时，直接双击根目录Start-Docker.cmd。公共逻辑在deploy/start-docker.ps1：仅校验可用-ValidateOnly，正常启动尝试唤起Docker Desktop、确认Linux Engine、使用三份Compose和私密env构建/启动，等两页可用后打开带token的机器人管理台与NapCat。-NoBrowser保留控制台链接而不打开浏览器。缺配置/Engine不兼容/构建失败即停止，不生成新账号密钥、不覆盖本地配置、不启动AI worker；首次扫码与管理台启动平台仍需人工完成。关闭命令窗口不会停止已在后台运行的容器。
+
 在仓库根目录操作，先启动Docker Desktop的Linux containers/Engine。Linux服务器使用Docker Engine及Compose插件；不需在宿主安装Python或Node。
 
 1. 参考deploy/docker.env.example，把模型、主人UID等填进本机.env；已有.env请合并，不覆盖。只启用B站时可不填NapCat项；启用NapCat时生成自己的WEBUI_TOKEN。这个密码和OneBot API token、回调签名密钥是三种不同用途。
