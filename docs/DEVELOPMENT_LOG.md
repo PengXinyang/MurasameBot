@@ -1,5 +1,13 @@
 # 开发日志与当前状态
 
+## 2026-11-01：Docker基础镜像证书错误与Engine预拉取
+
+用户启动日志显示NapCat镜像已下载，但BuildKit在FROM之前向auth.docker.io获取Python镜像OAuth token时被未知根证书拒绝。本机只读诊断确认Windows直接请求同站点也不信任证书，取回公开证书仅用于检查、未发送登录/HTTP业务数据或导入信任；具体拦截来源未确认，也未断言BuildKit每次都收到同一证书。Windows系统代理启用，Engine未显示显式HTTP(S)代理；Engine拉取Python镜像成功且Docker Hub Secure=true，不依赖新增insecure配置。
+
+预拉取python:3.12-slim后，Compose build bot实际完成基础解析、依赖安装、项目打包与镜像导出。再以network=none、无私密挂载的临时容器验证Linux uid=10001、Config初始化及默认关闭平台，通过后容器自动删除；未启动真实bot/NapCat服务、模型调用或社交动作，未动全局代理/证书/账号配置。启动脚本在正常构建前检查缓存，缺失则Engine正常pull，拉取失败停止，不放宽TLS或自动信任未知证书。
+
+新增缓存缺失预拉取与拉取失败停止两项，启动/容器专项9通过、9.25秒；仅部署启动胶水变化，不重复业务完整回归。文档更新真实构建验收边界，Windows信任链的底层来源与正式容器扫码/收发仍未验收；构建恢复不等于全局网络问题根治。实际证书留在本机忽略诊断目录，不提交原始抓包、凭证或私密配置。
+
 ## 2026-11-01：Windows双击部署入口
 
 用户要求一键部署，新增根目录Start-Docker.cmd和公共deploy/start-docker.ps1；本机忽略目录的旧start.ps1改为委托公共脚本。检查已填写的私密配置和NapCat账号文件、Docker Compose，支持ValidateOnly不启动；正常模式确认Linux Engine、必要时查找并隐藏启动Docker Desktop，随后使用同一组私密env/三份Compose执行up -d --build。等待管理HTTP就绪、仅接受宿主回环发布端口、从容器读取本地管理token并打开两页，支持NoBrowser；失败停止，不启动worker或自动完成扫码，不覆盖密钥/配置、不迁移旧数据库。

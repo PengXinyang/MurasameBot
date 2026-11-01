@@ -1,6 +1,6 @@
 # Docker与NapCat部署
 
-2026-11-01。已交付构建/编排/初始化配置；本机Docker CLI存在、Engine未启动，不能据此宣称镜像构建、Linux运行或QQ实号收发已验收。本次只做离线Compose解析、隔离初始化与业务回归，不启动实号服务。
+2026-11-01。已交付构建/编排/初始化配置；后续排障中Engine已可访问，成功拉取Python基础镜像、构建bot镜像，并通过无网络/无私密挂载的Linux非root初始化检查。管理台真实启动、QQ扫码/收发和长期运行仍未由这些检查验收；早期“Engine未启动”的记录保留为历史。
 
 ## 组件和边界
 
@@ -99,4 +99,12 @@ bindings:
 - down保留卷；down -v会删除记忆/凭证以及NapCat登录态，本轮不执行。备份所有相关卷时先停止写入，备份属于私密材料。需要无停机备份的专门工具仍未实现。
 - 管理台健康但无消息时检查平台开关、接收服务、工作循环、登录/好友、暂停及回调签名。健康检查不检查NapCat或模型，不因不健康状态自动重放POST。docker compose logs可能含管理token或上游NapCat会话信息，不直接公开日志。
 
-本次已验证离线配置和初始化幂等性；镜像实际构建/启动、首次扫码、升级卷保留、容器互通、QQ收发、真实代理和Linux长期运行仍待实机验收。
+本次已验证配置、幂等初始化、真实镜像构建及无网络Linux初始化；实际管理台启动、首次扫码、升级卷保留、容器互通、QQ收发、真实代理和Linux长期运行仍待实机验收。
+
+## 基础镜像OAuth证书错误
+
+若FROM python:3.12-slim阶段访问auth.docker.io出现x509: certificate signed by unknown authority，失败发生在依赖镜像解析，修改应用Cookie或在应用镜像内装证书不能修复发生在FROM之前的请求。先区分Engine与宿主/BuildKit路径，不将成功下载另一个镜像视为所有请求路径都正常。
+
+本机一次排障中：Windows直连认证站点收到不受信任的证书链，具体拦截/签发来源未确认；Engine的docker pull python:3.12-slim却成功，Docker Hub Secure=true。预拉取后Compose构建完整成功。启动脚本现在检查基础镜像缓存，缺失时先通过Engine正常拉取，拉取失败即停止；不使用insecure-registry、不关闭TLS验证、不导入未知根证书。此顺序是已验证的构建路径调整，不代表Windows信任库已修复或所有环境都可恢复。
+
+遇到持续证书问题，应核对网络/代理和可信CA来源；如果确实需要组织代理CA，按[Docker官方证书说明](https://docs.docker.com/engine/network/ca-certs/)由操作者确认来源后处理。本项目不自动信任从失败握手中取得的证书。

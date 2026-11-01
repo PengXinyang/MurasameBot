@@ -69,6 +69,19 @@ try {
     }
     Write-Host '[3/4] Building and starting containers. The first build can take several minutes...'
     Write-Host 'Stop any old native bot/NapCat using the same account before logging in.'
+    # Let the Engine fetch a verified base image before BuildKit resolves FROM.
+    # This also avoids a separate host-side OAuth request when local TLS/DNS
+    # differs from the Engine. Never relax certificate verification.
+    $baseCached = $false
+    try {
+        & docker image inspect python:3.12-slim --format '{{.Id}}' *> $null
+        $baseCached = $LASTEXITCODE -eq 0
+    } catch { }
+    if (-not $baseCached) {
+        Write-Host 'Downloading the Python base image through Docker Engine...'
+        & docker pull python:3.12-slim
+        if ($LASTEXITCODE -ne 0) { throw 'Base image download failed. Check Docker network/certificate settings; TLS verification remains enabled.' }
+    }
     & docker @composeArgs up -d --build
     if ($LASTEXITCODE -ne 0) { throw 'Build/start failed. Check Docker Desktop network and proxy settings.' }
 
