@@ -45,6 +45,8 @@ class BilibiliModule(PlatformModule):
 
     def _poll_notifications(self, runtime, now):
         try:
+            group_key = f"grouped_notifications:{self.adapter.account_id}"
+            self.adapter.grouped_checkpoints = runtime.store.get_setting(group_key, {})
             events = self.adapter.notifications(now)
             self.record_inbox_warnings(runtime, "notifications", now)
             if runtime.engine.settings.platform == self.name:
@@ -55,6 +57,8 @@ class BilibiliModule(PlatformModule):
             for event in events:
                 added += runtime.engine.ingest(event, baseline=not initialized)
             runtime.store.set_setting(key, True)
+            runtime.store.set_setting(group_key, dict(sorted(self.adapter.grouped_checkpoints.items(),
+                key=lambda pair: pair[1], reverse=True)[:256]))
             if added or not initialized:
                 LOG.info("评论/@通知：%s %d 条", "建立历史基线" if not initialized else "发现新事件", added)
         except PlatformError as exc:

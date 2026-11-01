@@ -711,12 +711,27 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
 
     def _manual_send_row(self, db, action_id):
         row = db.execute("SELECT * FROM actions WHERE agent_id=? AND action_id=?", (self.agent_id,action_id)).fetchone()
-        if not row or row["state"] not in {"draft","failed"}:
+        retry17 = self._state17_retry(row)
+        if not row or row["state"] not in {"draft","failed"} and not retry17:
             raise ValueError("仅待审核或确定失败的消息可手动发送；已受理、结果未知及发送中消息不能重发")
         receipt = json.loads(row["receipt"]) if row["receipt"] else {}
-        if receipt.get("external_id") or (row["state"] == "failed" and receipt.get("state") != "failed"):
+        if not retry17 and (receipt.get("external_id") or (row["state"] == "failed" and receipt.get("state") != "failed")):
             raise ValueError("缺少确定失败的依据，请先核对平台结果")
         return row
+
+    @staticmethod
+    def _state17_retry(row):
+        if not row or row["state"] != "accepted":
+            return False
+        a = json.loads(row["payload"])
+        r = json.loads(row["receipt"] or "{}")
+        check = r.get("publication_check") or {}
+        return (a.get("platform") == "bilibili" and a.get("visibility", "public") == "public"
+            and a.get("kind") in {"reply","owner_comment","browse_comment","browse_reply","recommendation"}
+            and (a.get("content") or {}).get("provider") == "bilibili"
+            and r.get("state") == "accepted" and bool(r.get("external_id"))
+            and type(check.get("platform_state")) is int and check["platform_state"] == 17
+            and check.get("status") == "self_only")
 
     def manual_send_target(self, action_id):
         with self.connection() as db:
@@ -727,6 +742,11 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             row = self._manual_send_row(db,original.action_id)
             if Action.from_dict(json.loads(row["payload"])) != original:
                 raise ValueError("消息已发生变化，请刷新后重新检查")
+            retry17 = self._state17_retry(row)
+            family = original.resend_of or original.action_id
+            if retry17:
+                action = replace(action, action_id=stable_id(original.action_id,"resend",uuid4().hex),
+                    resend_of=family, created_at=now)
             action = replace(action,retry_at=max(now,(row["sent_at"] or 0)+min_gap))
             # Restore only this version's confirmed delivery failure, never a
             # cancelled/completed/changed task or a forgotten source.
@@ -737,10 +757,12 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
             reason = self._validate_action(db,action,now)
             if reason:
                 raise ValueError("消息不能发送："+reason)
-            others = db.execute("SELECT payload,dedup_key,state FROM actions WHERE agent_id=? AND action_id!=? AND state IN ('draft','queued','reviewing','sending','unknown','accepted')",
-                                (self.agent_id,action.action_id)).fetchall()
+            others = db.execute("SELECT payload,dedup_key,state,receipt FROM actions WHERE agent_id=? AND action_id!=? AND state IN ('draft','queued','reviewing','sending','unknown','accepted')",
+                                (self.agent_id,original.action_id)).fetchall()
             for other in others:
                 prior = Action.from_dict(json.loads(other["payload"]))
+                if action.resend_of and (prior.action_id == family or prior.resend_of == family) and self._state17_retry(other):
+                    continue
                 same_source = bool(action.event_id and prior.event_id == action.event_id and prior.kind == action.kind)
                 same_key = bool(action.dedup_key and other["dedup_key"] == action.dedup_key)
                 separate = {"owner_repost","like","coin","browse_reply"}
@@ -749,14 +771,21 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
                 same_plan = action.kind in {"autonomous_post","proactive_private"} and prior.kind == action.kind and (
                     prior.text == action.text or other["state"] in {"sending","unknown"} or
                     (other["state"] in {"draft","queued","reviewing"} and prior.expires_at > now))
-                if same_source or same_key or same_content or same_plan:
+                same_family = bool(action.resend_of and (prior.action_id == family or prior.resend_of == family))
+                if same_source or same_key or same_content or same_plan or same_family:
                     raise ValueError("同一来源已有待发送、结果未知或已受理的消息，不能重复入队")
             db.execute("INSERT INTO audit(agent_id,kind,detail,created_at) VALUES(?,?,?,?)",
                        (self.agent_id,"manual_send",dumps({"action_id":action.action_id,"previous_state":row["state"],
                         "previous_receipt":json.loads(row["receipt"]) if row["receipt"] else None,
                         "previous_sent_at":row["sent_at"],"attempt":action.manual_attempts}),now))
-            db.execute("UPDATE actions SET state='queued',payload=?,expires_at=?,receipt='{}',sent_at=NULL,lease_until=0 WHERE agent_id=? AND action_id=?",
-                       (dumps(action.to_dict()),action.expires_at,self.agent_id,action.action_id))
+            if retry17:
+                db.execute("INSERT INTO actions(agent_id,action_id,payload,content_key,dedup_key,kind,state,created_at,expires_at) VALUES(?,?,?,?,?,?,'queued',?,?)",
+                    (self.agent_id,action.action_id,dumps(action.to_dict()),row["content_key"],row["dedup_key"],action.kind,now,action.expires_at))
+                db.execute("UPDATE actions SET payload=? WHERE agent_id=? AND action_id=?",
+                    (dumps(replace(original,manual_attempts=action.manual_attempts).to_dict()),self.agent_id,original.action_id))
+            else:
+                db.execute("UPDATE actions SET state='queued',payload=?,expires_at=?,receipt='{}',sent_at=NULL,lease_until=0 WHERE agent_id=? AND action_id=?",
+                           (dumps(action.to_dict()),action.expires_at,self.agent_id,action.action_id))
             return action
 
     def enable_review_mode(self):

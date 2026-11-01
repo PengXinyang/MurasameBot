@@ -299,6 +299,11 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         return replace(event, content=ref)
 
     def notifications(self, now: float) -> list[Event]:
+        from murasamebot.adapters.platforms.bilibili_grouped import expand_grouped
+        if not hasattr(self, "grouped_checkpoints"):
+            self.grouped_checkpoints = {}
+        self.grouped_pages_remaining = min(self.pages, 3)
+        self.grouped_groups_remaining = 3
         uid = (self._account or self.read_account())["uid"]
         events = {}
         for endpoint, kind in (("/x/msgfeed/reply", "reply"), ("/x/msgfeed/at", "mention")):
@@ -307,6 +312,9 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                 data, _ = self._request(endpoint, params=params)
                 items = data.get("items") or []
                 for item in items:
+                    if kind == "reply":
+                        for recovered in expand_grouped(self, item, uid, now):
+                            events[recovered.event_id] = recovered
                     event = self.notification_event(item, kind, uid, now)
                     if event and event.occurred_at >= now - self.max_age:
                         if event.kind == "post_mention":

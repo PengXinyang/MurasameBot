@@ -10,6 +10,7 @@ import pytest
 
 from murasamebot.bootstrap.web import handler_for
 from murasamebot.domain.models import Action, ContentRef, Receipt
+from murasamebot.domain.models import PublicationCheck
 from test_architecture_and_config import write_config
 
 
@@ -17,6 +18,59 @@ def message(engine, now, **changes):
     return replace(Action("manual-message",engine.settings.agent_id,"bilibili","robot",
         ContentRef("bilibili","video","10001"),"吾辈在这儿，慢慢说便好。",now,now+30,
         topic_class="casual"),**changes)
+
+
+def accepted17(engine,store,now):
+    a=message(engine,now,kind='reply',visibility='public')
+    assert store.enqueue_action(a,draft=False,now=now)
+    with store.connection() as db:db.execute("update actions set state='sending' where action_id=?",(a.action_id,))
+    store.finish_action(a.action_id,Receipt('accepted','old-rpid',publication_check=PublicationCheck('self_only','状态17',now,17)),now)
+    return a
+
+
+def test_state17_manual_retry_preserves_receipt_and_creates_one_new_outbox_item(factory,now):
+    e,s,m,p=factory();a=accepted17(e,s,now)
+    child=e.queue_manual_send(a.action_id,now+1)
+    assert child.action_id!=a.action_id and child.resend_of==a.action_id
+    rows={r['action_id']:r for r in s.inspect('actions')}
+    assert rows[a.action_id]['state']=='accepted' and json.loads(rows[a.action_id]['receipt'])['external_id']=='old-rpid'
+    assert rows[child.action_id]['state']=='queued' and not p.sent
+    with pytest.raises(ValueError):e.queue_manual_send(a.action_id,now+2)
+
+
+def test_state17_retry_still_counts_original_in_daily_limit(factory,now):
+    e,s,m,p=factory(daily_comments=1);a=accepted17(e,s,now)
+    e.queue_manual_send(a.action_id,now+20)
+    assert not e.dispatch_one(now+20) and not p.sent
+
+
+def test_state17_retry_double_click_and_success_cannot_be_repeated(factory,now):
+    e,s,m,p=factory();a=accepted17(e,s,now)
+    def retry(_):
+        try:return e.queue_manual_send(a.action_id,now+20)
+        except ValueError:return None
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(retry,range(2)))
+    child=next(r for r in results if r)
+    assert sum(r is not None for r in results)==1
+    with s.connection() as db:db.execute("update actions set state='sending' where action_id=?",(child.action_id,))
+    s.finish_action(child.action_id,Receipt('accepted','new-rpid',publication_check=PublicationCheck('account_visible','正常',now+21,0)),now+21)
+    with pytest.raises(ValueError):e.queue_manual_send(a.action_id,now+30)
+
+
+@pytest.mark.parametrize('change',['private','wrong_status','no_id','not_comment','unknown','string_state'])
+def test_state17_exception_cannot_be_used_for_other_receipts(factory,now,change):
+    e,s,m,p=factory();a=accepted17(e,s,now)
+    with s.connection() as db:
+        row=db.execute('select payload,receipt from actions where action_id=?',(a.action_id,)).fetchone()
+        payload=json.loads(row['payload']);r=json.loads(row['receipt'])
+        if change=='private':payload['visibility']='private'
+        elif change=='wrong_status':r['publication_check']['status']='unavailable'
+        elif change=='no_id':r['external_id']=''
+        elif change=='not_comment':payload['kind']='coin'
+        elif change=='unknown':db.execute("update actions set state='unknown' where action_id=?",(a.action_id,))
+        else:r['publication_check']['platform_state']='17'
+        db.execute('update actions set payload=?,receipt=? where action_id=?',(json.dumps(payload),json.dumps(r),a.action_id))
+    with pytest.raises(ValueError):e.queue_manual_send(a.action_id,now+20)
 
 
 def test_manual_draft_approval_renews_delivery_window_and_still_uses_outbox(factory,now):

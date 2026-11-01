@@ -234,6 +234,7 @@ class Action:
     owner_activity_version: str = ""  # Observation grant/policy revision, independent of refreshes.
     owner_activity_sources: tuple[str, ...] = ()  # Referenced observations; never raw history.
     manual_attempts: int = 0
+    resend_of: str = ""  # Manual state17 retry; preserve the original accepted receipt.
     topic_class: str = "unknown"
     retry_at: float = 0
     social_refs: tuple[dict[str, Any], ...] = ()
