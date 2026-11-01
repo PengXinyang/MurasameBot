@@ -86,6 +86,10 @@ bindings:
 
 ## 7890、模型服务与音视频
 
+新卷开启GFWList分流前须有有效规则；如果首次下载失败且无缓存，国内平台仍可直连，但需要规则判断的模型请求会在发送前失败。现在管理台显示proxy_rules_unavailable及“代理分流规则未就绪”，旧版可能仅显示ConnectError。只读种子可额外提供data/gfwlist.txt，入口限大小且解析验证，仅在卷内目标缺失时导入；不会覆盖已有缓存或复制同目录的数据库。先确认宿主缓存有效，再将这一份公开规则放入种子目录。已有卷可在停worker后单独导入验证过的规则，不复制运行中SQLite或原始日志。没有有效规则时不自动猜测出口，更新失败但有旧有效规则则继续使用并警告。
+
+检查模型网络可以先发不带密钥的模型列表GET；能返回HTTP401说明请求已到服务、缺少认证是本次探测的预期结果。它不证明实际模型密钥或生成成功。维护时暂停工作循环，修复后人工重启并用一条新消息验收，避免把恢复连接作为积压消息批量发送的测试。
+
 容器127.0.0.1是容器自身。宿主代理或模型服务用host.docker.internal；Compose为Linux添加host-gateway，Docker Desktop也提供该域名。网络概念见[Docker Desktop文档](https://docs.docker.com/desktop/features/networking/)。宿主服务必须允许来自容器的连接；代理仅监听宿主回环时可能仍不可达，需调整代理监听/防火墙，不能仅靠改域名保证连通。
 
 初始关闭代理。需要时在卷内network开启proxy_enabled、地址http://host.docker.internal:7890，保留proxy_mode: gfwlist和国内直连规则。不要给NapCat全局设置代理，不使用network all模式替代原选择性路由。镜像拉取、pip构建下载使用Docker Engine/构建器自己的代理设置，与bot运行时分流是两条链路。

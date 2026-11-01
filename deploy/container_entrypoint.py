@@ -14,10 +14,23 @@ def prepare(root: Path, image: Path, seed: Path | None = None):
         # Never import databases, owner grants or overwrite live volume state.
         names = ("config.yml", "config.local.yml", "character/settings.yml", "character/text_profile.yml",
                  "character/avatar/dashboard-smile.jpg", "character/avatar/dashboard-letter.jpg",
-                 "character/avatar/dashboard-kimono.png", ".secrets/bilibili.json", ".secrets/bilibili.device.json")
+                 "character/avatar/dashboard-kimono.png", ".secrets/bilibili.json", ".secrets/bilibili.device.json",
+                 "data/gfwlist.txt")
         for name in names:
             source, target = seed / name, root / name
             if source.is_file() and not target.exists():
+                if name == "data/gfwlist.txt":
+                    from murasamebot.adapters.proxy_rules import RuleSet, MAX_BYTES
+                    try:
+                        with source.open("rb") as handle:
+                            content = handle.read(MAX_BYTES + 1)
+                        RuleSet(content)
+                    except (OSError, ValueError):
+                        print("Invalid optional seed GFWList ignored; routing still requires valid rules", file=sys.stderr)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+                    continue
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 shutil.copyfile(source, target)
                 if name == "config.local.yml" or name.startswith(".secrets/"):

@@ -6,6 +6,23 @@ from murasamebot.adapters.models.chat_completions import ChatCompletionsModel
 from murasamebot.domain.models import ModelError
 
 
+def test_missing_routing_rules_are_not_reported_as_model_connection_failure(factory):
+    from murasamebot.adapters.proxy_rules import ProxyRulesUnavailable
+    _,store,_,_=factory()
+    def handle(request):
+        raise ProxyRulesUnavailable("private upstream text or credential must not leak")
+    gateway=ChatCompletionsModel(base_url="https://model.invalid",name="fake",api_key="private-key",store=store,
+        timezone="Asia/Hong_Kong",daily_limit=1,client=httpx.Client(transport=httpx.MockTransport(handle)))
+    try:
+        with pytest.raises(ModelError,match="代理分流规则未就绪"):
+            gateway.decide("private_chat",{"message":"private user source"})
+        diagnostic=next(row["detail"] for row in store.inspect("audit") if row["kind"]=="model_response_error")
+        assert json.loads(diagnostic)["error"]=="proxy_rules_unavailable"
+        assert all(s not in diagnostic for s in ("private-key","private upstream","private user source"))
+    finally:
+        gateway.close()
+
+
 def test_full_expression_catalog_keeps_kaomoji_after_native_emotes(factory):
     from murasamebot.application.expressions import KAOMOJIS
     _,store,_,_=factory()

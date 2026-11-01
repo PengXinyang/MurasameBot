@@ -18,6 +18,10 @@ LOG = logging.getLogger(__name__)
 MAX_BYTES = 2 * 1024 * 1024
 
 
+class ProxyRulesUnavailable(httpx.ConnectError):
+    """No trustworthy routing decision exists; no target request was sent."""
+
+
 def _pattern(rule: str) -> re.Pattern:
     if rule.startswith("/"):
         # GFWList includes one regex exception without a closing slash.
@@ -142,7 +146,7 @@ class RuleCache:
                     self.warning = "代理规则更新失败；继续使用上次有效规则" if self.rules else "代理规则不可用；需要规则的请求暂时失败，B站等直连请求不受影响"
                     LOG.warning(self.warning)
             if self.rules is None:
-                raise httpx.ConnectError("代理规则不可用，请检查 7890 代理并运行 proxy-rules --refresh")
+                raise ProxyRulesUnavailable("代理规则不可用，请检查 7890 代理并运行 proxy-rules --refresh")
             return self.rules
 
     def status(self):

@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from murasamebot.adapters.network import ProxyPolicy, RoutingTransport, client, rules_for
-from murasamebot.adapters.proxy_rules import RuleCache, RuleSet
+from murasamebot.adapters.proxy_rules import RuleCache, RuleSet, ProxyRulesUnavailable
 from murasamebot.bootstrap.config import Config
 from test_architecture_and_config import write_config
 
@@ -133,7 +133,7 @@ def test_no_cache_and_failed_download_does_not_guess_routes(tmp_path, monkeypatc
     p = policy(tmp_path)
     p.cache_file.unlink()
     monkeypatch.setattr(RuleCache, "_download", lambda self: b"broken")
-    with pytest.raises(httpx.ConnectError, match="代理规则不可用"):
+    with pytest.raises(ProxyRulesUnavailable, match="代理规则不可用"):
         p.should_proxy("https://api.deepseek.com")
     assert not p.should_proxy("https://api.bilibili.com")
     assert not p.cache_file.exists()

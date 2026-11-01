@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from murasamebot.adapters.network import client as network_client
 from murasamebot.adapters.models.structured_json import parse_object
+from murasamebot.adapters.proxy_rules import ProxyRulesUnavailable
 
 from murasamebot.domain.models import ModelError
 from murasamebot.ports import StateStore
@@ -347,6 +348,8 @@ class ChatCompletionsModel:
             return parsed
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
             # Do not log response bodies, private prompts, tokens or credential-bearing request URLs.
+            if isinstance(exc, ProxyRulesUnavailable):
+                fail("proxy_rules_unavailable", "代理分流规则未就绪，未向模型发送请求；请导入有效GFWList缓存或更新规则")
             fail("transport_or_schema_error:" + type(exc).__name__, f"模型调用或响应结构失败：{type(exc).__name__}")
 
     def close(self):

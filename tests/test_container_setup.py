@@ -73,3 +73,19 @@ def test_readonly_seed_imports_only_missing_config_not_database_or_owner_grants(
     assert (root/"data/murasame.sqlite3").read_text()=="runtime database"
     assert (root/".secrets/bilibili.json").read_text()=="runtime login"
     assert before=={str(p.relative_to(seed)):p.read_bytes() for p in seed.rglob('*') if p.is_file()}
+
+
+def test_seed_routing_cache_is_validated_optional_and_does_not_overwrite_live_rules(tmp_path):
+    image=Path(__file__).resolve().parents[1]
+    prepare=runpy.run_path(str(image / "deploy/container_entrypoint.py"))["prepare"]
+    seed,root=tmp_path/"seed",tmp_path/"volume"
+    cache=seed/"data/gfwlist.txt";cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"invalid rules")
+    prepare(root,image,seed)
+    assert not (root/"data/gfwlist.txt").exists()
+    cache.write_bytes(b"[AutoProxy 0.2.9]\n||x.com^\n")
+    prepare(root,image,seed)
+    assert (root/"data/gfwlist.txt").read_bytes()==cache.read_bytes()
+    cache.write_bytes(b"[AutoProxy 0.2.9]\n||different.example^\n")
+    prepare(root,image,seed)
+    assert b"different" not in (root/"data/gfwlist.txt").read_bytes()
