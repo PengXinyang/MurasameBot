@@ -12,7 +12,8 @@ services:
         condition: service_healthy
     environment:
       WEBUI_TOKEN: ${NAPCAT_WEBUI_TOKEN:?Set NAPCAT_WEBUI_TOKEN in local .env}
-      MODE: http
+      # Account-specific OneBot JSON is prepared separately; no image template.
+      MODE: ""
     volumes:
       - napcat-qq:/app/.config/QQ
       - napcat-config:/app/napcat/config

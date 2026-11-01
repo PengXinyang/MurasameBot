@@ -5,8 +5,23 @@ import shutil
 import sys
 
 
-def prepare(root: Path, image: Path):
+def prepare(root: Path, image: Path, seed: Path | None = None):
     root.mkdir(parents=True, exist_ok=True)
+    if seed is not None:
+        if not seed.is_dir():
+            raise ValueError("Container seed directory does not exist")
+        # Copy only explicit initial settings/assets and AI login files.
+        # Never import databases, owner grants or overwrite live volume state.
+        names = ("config.yml", "config.local.yml", "character/settings.yml", "character/text_profile.yml",
+                 "character/avatar/dashboard-smile.jpg", "character/avatar/dashboard-letter.jpg",
+                 "character/avatar/dashboard-kimono.png", ".secrets/bilibili.json", ".secrets/bilibili.device.json")
+        for name in names:
+            source, target = seed / name, root / name
+            if source.is_file() and not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                shutil.copyfile(source, target)
+                if name == "config.local.yml" or name.startswith(".secrets/"):
+                    target.chmod(0o600)
     for name in ("config.yml", "character/settings.yml", "character/text_profile.yml"):
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -43,6 +58,7 @@ qq_calls:
 if __name__ == "__main__":
     root, image = Path("/workspace"), Path("/opt/murasame")
     os.umask(0o077)
-    prepare(root, image)
+    seed = os.environ.get("MURASAME_SEED_DIR", "")
+    prepare(root, image, Path(seed) if seed else None)
     os.chdir(root)
     os.execv(sys.executable, [sys.executable, str(image / "run.py"), "--config", str(root / "config.yml"), *sys.argv[1:]])

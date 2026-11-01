@@ -47,3 +47,29 @@ def test_container_listener_keeps_auth_handler_and_closes_on_sigterm(tmp_path, m
     assert captured["address"] == ("0.0.0.0", 8766)
     assert captured["receivers_closed"] and captured["server_closed"]
     assert captured["handler"] is previous
+
+
+def test_readonly_seed_imports_only_missing_config_not_database_or_owner_grants(tmp_path):
+    image=Path(__file__).resolve().parents[1]
+    prepare=runpy.run_path(str(image / "deploy/container_entrypoint.py"))["prepare"]
+    seed,root=tmp_path/"seed",tmp_path/"volume"
+    for name,text in {"config.local.yml":"# first settings", "character/text_profile.yml":"custom persona",
+                      ".secrets/bilibili.json":"fake AI login", "data/murasame.sqlite3":"must not import",
+                      ".secrets/admin-token":"must not import", ".secrets/owner-bilibili.json":"must not import"}.items():
+        file=seed/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_text(text)
+    before={str(p.relative_to(seed)):p.read_bytes() for p in seed.rglob('*') if p.is_file()}
+    prepare(root,image,seed)
+    assert (root/"config.local.yml").read_text()=="# first settings"
+    assert (root/"character/text_profile.yml").read_text()=="custom persona"
+    assert (root/".secrets/bilibili.json").read_text()=="fake AI login"
+    assert not (root/"data/murasame.sqlite3").exists()
+    assert not (root/".secrets/admin-token").exists()
+    assert not (root/".secrets/owner-bilibili.json").exists()
+    (root/"config.local.yml").write_text("# runtime edit")
+    (root/"data/murasame.sqlite3").write_text("runtime database")
+    (root/".secrets/bilibili.json").write_text("runtime login")
+    prepare(root,image,seed)
+    assert (root/"config.local.yml").read_text()=="# runtime edit"
+    assert (root/"data/murasame.sqlite3").read_text()=="runtime database"
+    assert (root/".secrets/bilibili.json").read_text()=="runtime login"
+    assert before=={str(p.relative_to(seed)):p.read_bytes() for p in seed.rglob('*') if p.is_file()}

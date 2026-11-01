@@ -83,7 +83,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Base image download failed. Check Docker network/certificate settings; TLS verification remains enabled.' }
     }
     & docker @composeArgs up -d --build
-    if ($LASTEXITCODE -ne 0) { throw 'Build/start failed. Check Docker Desktop network and proxy settings.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Build/start failed. Read the Docker build, port or healthcheck error above.' }
 
     Write-Host '[4/4] Waiting for management pages...'
     $botUrl = Get-LocalServiceUrl 8766

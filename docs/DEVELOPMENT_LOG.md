@@ -1,5 +1,13 @@
 # 开发日志与当前状态
 
+## 2026-11-01：Windows挂载unhealthy与NapCat模板启动修复
+
+用户提供unhealthy及启动Traceback，实际检查确认bot以uid=10001运行，Windows bind目录.secrets映射uid=0/mode777，chmod已有目录返回EPERM；同进程新建临时文件的chmod正常。上一轮只验证无挂载临时初始化，遗漏实际Windows工作目录，这是部署兼容缺口。没有降级成root或忽略chmod，改为原生bot-state:/workspace、Windows来源只读/bootstrap及显式MURASAME_SEED_DIR。仅将允许列表的缺失配置、人设、UI图和AI登录拷入卷内，不复制数据库、主人授权/admin-token，不覆盖运行状态。旧Windows目录保留，私密覆盖更新，新增公共Windows种子示例。
+
+真实重建发现宿主默认管理端口有既有Python进程占用，保持该进程不动，只把本机Docker发布端口改为空闲端口，公共模板默认未改。bot实际healthy后，NapCat仍重启；读取当前镜像真实入口确认MODE=http会复制不存在的/app/templates/http.json。清空MODE，使用预填账号OneBot配置，保留所有私密配置和QQ卷；同时将入口失败提示改为查看构建/端口/健康错误，不一律建议检查代理。
+
+启动/容器相关10项通过，9.30秒；实际Compose重建后bot healthy、NapCat running，两页HTTP200，bot uid10001、.secrets700、配置及token600；认证读取receiver状态确认worker=false、无选中平台。卷内再次初始化的配置/人设/token哈希未变化。之后实际执行公共启动脚本-NoBrowser，缓存构建→健康等待→两管理地址/token读取全流程exit0，输出先脱敏，未打开浏览器。未扫码、调用模型或进行社交写入，不以管理页正常宣称QQ消息验收；旧本机服务未关闭。此轮只改部署引导，不重跑业务完整套件；文档同步D51及实机边界，私密来源/密码/原始日志/QQ号与角色备份不提交。
+
 ## 2026-11-01：Docker基础镜像证书错误与Engine预拉取
 
 用户启动日志显示NapCat镜像已下载，但BuildKit在FROM之前向auth.docker.io获取Python镜像OAuth token时被未知根证书拒绝。本机只读诊断确认Windows直接请求同站点也不信任证书，取回公开证书仅用于检查、未发送登录/HTTP业务数据或导入信任；具体拦截来源未确认，也未断言BuildKit每次都收到同一证书。Windows系统代理启用，Engine未显示显式HTTP(S)代理；Engine拉取Python镜像成功且Docker Hub Secure=true，不依赖新增insecure配置。

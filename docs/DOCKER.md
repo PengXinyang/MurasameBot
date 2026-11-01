@@ -1,12 +1,13 @@
 # Docker与NapCat部署
 
-2026-11-01。已交付构建/编排/初始化配置；后续排障中Engine已可访问，成功拉取Python基础镜像、构建bot镜像，并通过无网络/无私密挂载的Linux非root初始化检查。管理台真实启动、QQ扫码/收发和长期运行仍未由这些检查验收；早期“Engine未启动”的记录保留为历史。
+2026-11-01。已交付构建/编排/初始化配置；后续排障中Engine已可访问，成功拉取Python基础镜像、构建bot镜像，并通过无网络/无私密挂载的Linux非root初始化检查。后续Windows挂载修复后，管理台/NapCat实际启动、HTTP及一键-NoBrowser流程也已通过；QQ扫码/收发和长期运行仍待验收。早期“Engine未启动”的记录保留为历史。
 
 ## 组件和边界
 
 - Dockerfile基于Python 3.12 slim，安装项目及扫码依赖，以10001非root用户运行。构建上下文采用.dockerignore允许列表，不包含本机.env、config.local.yml、凭证、数据库、聊天记录或备份。两个角色项目文件及三张已批准的管理台装饰图随镜像提供；其他可选图片按需迁入卷，不整包复制角色衣装目录。不要把私人追加配置放入公开人设文件。
 - compose.yml运行单个bot，持久目录/workspace使用bot-state命名卷，存配置、角色、SQLite/WAL、凭证及管理token。首次只初始化缺失文件；重建镜像不覆盖已有配置或人设，不自动迁移本机数据。
-- 默认仅启动管理台，两平台在首次生成的config.local.yml中均关闭；工作循环由管理台人工开启。无人值守启动可在本机Compose覆盖文件将bot.command设为[serve, --with-worker]，它会按已配置的平台开关启动唯一协调器，不应再同时执行run或第二个worker容器。
+- Windows本地配置应作为只读/bootstrap来源，不将整个Windows目录直接作为/workspace。示例见deploy/compose.windows-seed.example.yml：运行数据留在bot-state，MURASAME_SEED_DIR=/bootstrap只在目标文件缺失时导入允许列表中的配置、人设、三张UI图与AI登录文件；不导入数据库、管理token或主人观察凭证。已有卷内配置/记忆/登录不覆盖；以后改Windows源文件不自动更新运行配置，请用管理台或下文cp方式维护卷内文件。
+- 默认仅启动管理台，没有种子时首次生成的config.local.yml关闭两平台；种子中的平台开关沿用，但不会自动启动worker。工作循环由管理台人工开启。无人值守启动可在本机Compose覆盖文件将bot.command设为[serve, --with-worker]，它会按已配置的平台开关启动唯一协调器，不应再同时执行run或第二个worker容器。
 - MURASAME_CONTAINER_BIND=1只在镜像内使管理台监听容器0.0.0.0，原Host/Origin/token校验仍保留。宿主仅绑定127.0.0.1:8766，不直接开放公网；浏览器用localhost/127.0.0.1。检查健康只代表管理台HTTP可用，不证明模型、工作循环或QQ已登录。
 - NapCat使用独立容器与独立QQ/配置/插件命名卷，通过network_mode: service:bot共用网络命名空间，双方127.0.0.1可互通。QQ API仍为本机3000、签名回调仍为本机8767，不放宽本项目QQ URL校验，不发布3000/8767。NapCat WebUI通过bot的宿主回环6099访问；bot没有挂Docker socket。
 
@@ -53,7 +54,7 @@ docker compose -f compose.yml -f compose.napcat.yml config --quiet
 docker compose -f compose.yml -f compose.napcat.yml up -d --build
 ```
 
-打开http://127.0.0.1:6099，输入WebUI token，由用户本人扫码登录AI的QQ。MODE=http作为初始化提示；已有NapCat配置优先，必须在实际WebUI确认以下两项，不假设环境变量自动覆盖旧配置：
+打开http://127.0.0.1:6099，输入WebUI token，由用户本人扫码登录AI的QQ。MODE留空，使用准备好的账号专用OneBot JSON或WebUI设置；它是镜像模板名称，不是HTTP协议开关，当前镜像没有http.json，不能写MODE=http。必须在实际WebUI确认以下两项：
 
 | NapCat设置 | 值 |
 | --- | --- |
@@ -99,7 +100,7 @@ bindings:
 - down保留卷；down -v会删除记忆/凭证以及NapCat登录态，本轮不执行。备份所有相关卷时先停止写入，备份属于私密材料。需要无停机备份的专门工具仍未实现。
 - 管理台健康但无消息时检查平台开关、接收服务、工作循环、登录/好友、暂停及回调签名。健康检查不检查NapCat或模型，不因不健康状态自动重放POST。docker compose logs可能含管理token或上游NapCat会话信息，不直接公开日志。
 
-本次已验证配置、幂等初始化、真实镜像构建及无网络Linux初始化；实际管理台启动、首次扫码、升级卷保留、容器互通、QQ收发、真实代理和Linux长期运行仍待实机验收。
+本次已验证配置、幂等初始化、真实镜像构建及无网络Linux初始化；管理台实际启动与一键流程后续已通过；首次扫码、QQ API/回调互通、QQ收发、真实代理和长期运行仍待实机验收。
 
 ## 基础镜像OAuth证书错误
 
@@ -108,3 +109,7 @@ bindings:
 本机一次排障中：Windows直连认证站点收到不受信任的证书链，具体拦截/签发来源未确认；Engine的docker pull python:3.12-slim却成功，Docker Hub Secure=true。预拉取后Compose构建完整成功。启动脚本现在检查基础镜像缓存，缺失时先通过Engine正常拉取，拉取失败即停止；不使用insecure-registry、不关闭TLS验证、不导入未知根证书。此顺序是已验证的构建路径调整，不代表Windows信任库已修复或所有环境都可恢复。
 
 遇到持续证书问题，应核对网络/代理和可信CA来源；如果确实需要组织代理CA，按[Docker官方证书说明](https://docs.docker.com/engine/network/ca-certs/)由操作者确认来源后处理。本项目不自动信任从失败握手中取得的证书。
+
+## unhealthy与Windows挂载权限
+
+先看容器自己的退出原因，unhealthy并不等于网络问题。一次真实启动中，宿主Windows绑定目录.secrets映射为uid=0、mode=777，bot运行uid=10001；修改已有目录权限失败，但进程新建文件的chmod正常。这是此前只在无挂载临时容器验收遗漏的场景。修复采用原生命名卷加只读初始配置来源，保留Linux 700/600权限、非root和原Windows文件，不改成root或忽略所有权限错误。实际已验证bot healthy、两管理页HTTP200及工作循环未启动；QQ扫码和实号收发仍需独立验收。

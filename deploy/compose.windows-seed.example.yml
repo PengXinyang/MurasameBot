@@ -1,0 +1,12 @@
+# Combine with root compose.yml. Paths are relative to that first Compose file.
+services:
+  bot:
+    environment:
+      MURASAME_SEED_DIR: /bootstrap
+    volumes:
+      - bot-state:/workspace
+      - type: bind
+        source: ./deploy/local/workspace
+        target: /bootstrap
+        read_only: true
+    command: [serve]
