@@ -1,5 +1,7 @@
 # 当前架构
 
+2026-11-01目标链隔离补充：documents继续保存媒体缓存，并为有comment_context的内容增加内容键+reply目标键的派生缓存；最终发布策略和独立审核按目标取链，TTL仍24小时。无需schema迁移；旧目标不匹配时明确拒绝，不把旁支评论混入审核。读取节流默认值与配置验证统一，写入仍共用原outbox。见D54。
+
 2026-11-01补充：BilibiliModule在通知收件前加载有界聚合检查点，BilibiliAdapter调用bilibili_grouped完成自有视频的有界评论恢复，事件持久化后保存检查点，仍进入原协调器与outbox。人工state17重发通过SQLite事务创建关联resend_of的新Action，保留原accepted记录及额度；平台写入仍串行并走原最终策略，未引入第二套发送循环或schema迁移。详见D53。
 
 2026-11-01实机修正：Windows初始配置只读挂载至/bootstrap，通过显式seed允许列表补入原生/workspace卷的缺失文件；运行配置/凭证/SQLite留卷内，保留非root与POSIX权限，不从种子覆盖已有数据。NapCat MODE为空以避免不存在的镜像模板，账号OneBot配置仍独立维护。见D51与DOCKER.md。

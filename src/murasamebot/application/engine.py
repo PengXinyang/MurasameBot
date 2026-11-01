@@ -888,6 +888,8 @@ class SocialEngine:
     def _review_action(self, action: Action, now: float) -> Action | None:
         event = self.store.event(action.event_id) if action.event_id else None
         document = self.store.cached_document(action.content, now) if action.content else None
+        if action.content and action.reply_to:
+            document = self.store.cached_reply_document(action.content,action.reply_to,now) or document
         # Other speakers can update the cache for the same video concurrently.
         # A review must use this action's target, never another speaker's chain.
         if action.content and action.reply_to and (not document or not document.comment_context or

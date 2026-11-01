@@ -229,13 +229,23 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
             if action.visibility == "public" and action.content:
                 event = store.event(action.event_id) if action.event_id else None
                 document = store.cached_document(action.content,now)
+                if action.reply_to:
+                    scoped = store.cached_reply_document(action.content,action.reply_to,now)
+                    if scoped is not None:
+                        document = scoped
+                    elif document and document.comment_context and document.comment_context.target_id != action.reply_to:
+                        return "目标评论上下文已被其他评论链替换，需重新获取后生成；本次未判定为敏感"
                 binding = store.binding(current.data["owner_person_id"],action.platform)
                 owner = bool(binding and ((event and event.actor_id == binding["external_id"])
                     or (not action.reply_to and document and document.author_id == binding["external_id"])
                     or (action.reply_to and document and any(c.get("id")==action.reply_to and c.get("author_id")==binding["external_id"] for c in document.comments))))
-                if (blocked(action.topic_class,owner) or blocked(document_topic(document,event.text if event else ""),owner)
-                        or local_topic(action.text)=="sensitive"):
-                    return "公开话题限制：敏感、非主人严肃话题或未完成分类；人工批准也不放行"
+                source_topic = document_topic(document,event.text if event else "")
+                if local_topic(action.text) == "sensitive":
+                    return "公开话题限制：回复正文命中敏感话题规则"
+                for label, topic in (("回复话题分类",action.topic_class),("原内容或相关父评论链",source_topic)):
+                    if blocked(topic,owner):
+                        detail = {"sensitive":"敏感话题","serious":"非主人严肃话题"}.get(topic,"话题分类未完成或无效")
+                        return "公开话题限制：" + label + "：" + detail
             if action.content and action.content.kind == "video" and action.kind in {"recommendation", "task_result", "browse_comment", "browse_reply", "owner_comment", "reply"}:
                 from murasamebot.application.recommendation_policy import popularity_allows, reactive_video_reply
                 browse = current.data["browsing"]

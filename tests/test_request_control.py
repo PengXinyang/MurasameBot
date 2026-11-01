@@ -24,7 +24,10 @@ class Clock:
 
 
 def monitor(store,clock,**overrides):
-    return RequestMonitor(store,replace(RequestSettings(),**overrides),clock=clock,sleep=clock.sleep)
+    # Keep timing-algorithm tests explicit, independent of product defaults.
+    controlled = RequestSettings(read_gap_seconds=1,read_max_wait_seconds=5,account_cache_seconds=60,
+        backoff_seconds=60,backoff_max_seconds=900,quiet_before_seconds=60,quiet_after_seconds=15)
+    return RequestMonitor(store,replace(controlled,**overrides),clock=clock,sleep=clock.sleep)
 
 
 def test_shared_slots_are_atomic_and_bounded(factory,now):
@@ -122,6 +125,7 @@ def test_read_deferred_keeps_action_queued_without_sliding_planned_time(factory,
 
 def test_private_cadence_is_independent_and_quiet_preserves_checkpoint(factory,now,tmp_path):
     e,store,model,_=factory();config=Config(write_config(tmp_path));clock=Clock(now);m=monitor(store,clock)
+    config.data['bilibili']['private_poll_seconds']=30  # explicit configurable cadence
     calls=[]
     p=SimpleNamespace(account_id="robot",private_messages=lambda *a,**k:(calls.append(1) or PrivateInbox((),{})))
     rt=Runtime(config,store,p,model,e,network_monitor=m)
@@ -131,6 +135,20 @@ def test_private_cadence_is_independent_and_quiet_preserves_checkpoint(factory,n
     auto_action(store,now,due=90)
     rt.poll_private(now+60)
     assert len(calls)==2 and store.get_setting("private_inbox:robot")==old
+
+
+def test_conservative_defaults_and_private_read_backoff(factory,now,tmp_path):
+    config=Config(write_config(tmp_path));settings=RequestSettings()
+    assert config.data['bilibili']['private_poll_seconds']==90
+    assert config.data['requests']['read_gap_seconds']==settings.read_gap_seconds==3
+    _,store,_,_=factory();clock=Clock(now);m=RequestMonitor(store,settings,clock=clock,sleep=clock.sleep)
+    request=httpx.Request('GET','https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions')
+    response=httpx.Response(200,json={'code':-509})
+    m.record(request,response,now)
+    assert store.request_cooldown('private_inbox')['until']==now+300
+    assert not m.allowed('private_inbox') and m.allowed('notifications')
+    clock.now=now+301;m.record(request,response,clock.now)
+    assert store.request_cooldown('private_inbox')['until']==now+301+600
 
 
 @pytest.mark.parametrize("new_message",[False,True])

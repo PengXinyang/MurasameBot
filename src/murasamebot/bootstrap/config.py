@@ -90,7 +90,7 @@ class Config:
             raise ValueError("配置必须为 YAML 对象")
         from murasamebot.adapters.network import DIRECT_DOMAINS, GFWLIST_URL
         raw = merge({"platforms":{"bilibili":{"enabled":True}},"social":asdict(SocialSettings()),"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
-                     "bilibili":{"private_poll_seconds":30},
+                     "bilibili":{"private_poll_seconds":90},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_space":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_autonomy":{**asdict(AutonomySettings()),"daily_decision_limit":32,"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},

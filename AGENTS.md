@@ -55,6 +55,8 @@ Build a reusable social-agent core. Bilibili is the first live platform; later Q
 
 ## Execution and verification
 
+- D54（2026-11-01）：用户当前发送最小间隔已设60秒，普通发送和人工重发共用，不另设快速重发通道；读取默认GET3秒、私信轮询90秒、读取冷却300至1800秒、主动前后静默120/60秒。GET -509与写入拒绝分开诊断。最终公开话题检查及独立审核使用目标评论链缓存，媒体信息取最新版本；不可使用同视频另一个说话者的父链，也不可把上下文缺失统称正文敏感。原政治/严肃/未知边界保持。
+
 - 2026-11-01用户授权的评论例外：正常state=0在管理台显示“评论已发布/评论状态正常”，移除未独立验证提示，但不把折叠、invisible或缺失状态当正常。只有已受理B站公开评论、有效评论ID且最新核查为self_only/state17时允许人工重发；创建关联原记录的新outbox动作，保留原回执/已计额度与间隔，防双击并复验全部来源/身份/政策。unknown、sending及其他accepted仍不可重发，禁止自动重发state17。自有视频聚合评论通过有界补拉恢复，沿用同一评论ID去重与初始化基线，不开第二套回复循环。
 
 - Bilibili direct messages may receive a reply only when the logged-in account and peer are verified mutual followers. Following-only, follower-only, strangers, self, groups, system messages and unknown relationship states are denied. The owner has no exception. Recheck at generation and immediately before sending; never infer access from nicknames, session flags or model output.

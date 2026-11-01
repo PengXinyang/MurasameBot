@@ -849,6 +849,22 @@ class SQLiteStore(SQLiteMemory, SQLiteOwnerHistory, SQLiteRequests, SQLiteObserv
     def cache_document(self, document, now):
         with self.connection() as db:
             db.execute("INSERT INTO documents VALUES(?,?,?,?) ON CONFLICT(agent_id,content_key) DO UPDATE SET payload=excluded.payload,created_at=excluded.created_at", (self.agent_id, document.ref.key, dumps(asdict(document)), now))
+            if document.comment_context and document.comment_context.target_id:
+                key = document.ref.key + ":reply:" + document.comment_context.target_id
+                db.execute("INSERT INTO documents VALUES(?,?,?,?) ON CONFLICT(agent_id,content_key) DO UPDATE SET payload=excluded.payload,created_at=excluded.created_at",
+                    (self.agent_id,key,dumps(asdict(document)),now))
+
+    def cached_reply_document(self, ref, reply_to, now):
+        with self.connection() as db:
+            row = db.execute("SELECT payload FROM documents WHERE agent_id=? AND content_key=? AND created_at>?",
+                (self.agent_id,ref.key+":reply:"+reply_to,now-86400)).fetchone()
+        if row:
+            doc = Document.from_dict(json.loads(row[0]))
+            if doc.ref == ref and doc.comment_context and doc.comment_context.target_id == reply_to:
+                media = self.cached_document(ref,now)
+                return replace(media,comments=doc.comments,comment_context=doc.comment_context) if media else doc
+        base = self.cached_document(ref,now)
+        return base if base and base.comment_context and base.comment_context.target_id == reply_to else None
 
     def cached_document(self, ref, now):
         with self.connection() as db:

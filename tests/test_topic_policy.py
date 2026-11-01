@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from murasamebot.domain.models import Action, ContentRef, Document
+from murasamebot.domain.models import Action, ContentRef, Document, CommentContext
 from murasamebot.adapters.platforms.bilibili import BilibiliAdapter
 from murasamebot.bootstrap.config import Config
 from murasamebot.bootstrap.runtime import build
@@ -105,4 +105,37 @@ def test_final_policy_rejects_legacy_and_manually_approved_actions(tmp_path,grad
         action=Action("topic",runtime.store.agent_id,"bilibili","robot",ContentRef("bilibili","video","42"),
                       "测试文字",now,now+100,approved_manually=True,topic_class=grade)
         assert "话题限制" in runtime.engine.action_policy(action,now)
+    finally:runtime.close()
+
+
+def test_final_policy_uses_target_chain_instead_of_other_speakers_cache(tmp_path):
+    runtime=build(Config(write_config(tmp_path)))
+    try:
+        e,s=runtime.engine,runtime.store;now=1000
+        event=replace(inbound(now),text='你好',reply_to='700',thread_root='600')
+        e.ingest(event)
+        casual=Document(event.content,'游戏舞蹈','轻松娱乐','text',comments=({'id':'700','text':'你好','author_id':'123'},),
+            comment_context=CommentContext('700','600','complete'))
+        sensitive=replace(casual,comments=({'id':'800','text':'政治讨论','author_id':'456'},),
+            comment_context=CommentContext('800','600','complete'))
+        s.cache_document(casual,now);s.cache_document(sensitive,now+1)
+        a=Action('isolated',s.agent_id,'bilibili','robot',event.content,'吾辈在呢',now,now+100,
+            event_id=event.event_id,reply_to='700',thread_root='600',topic_class='casual')
+        assert e.action_policy(a,now+2)==''
+        assert s.cached_reply_document(event.content,'700',now+2).comments==casual.comments
+        assert '敏感' in e.action_policy(replace(a,reply_to='800'),now+2)
+        # Isolation must not hide a genuine later update of the video itself.
+        s.cache_document(replace(sensitive,title='政治分析'),now+3)
+        assert '敏感' in e.action_policy(a,now+4)
+    finally:runtime.close()
+
+
+def test_unknown_target_cache_is_not_called_sensitive(tmp_path):
+    runtime=build(Config(write_config(tmp_path)))
+    try:
+        now=1000;s=runtime.store;ref=ContentRef('bilibili','video','42')
+        s.cache_document(Document(ref,'游戏','简介','text',comment_context=CommentContext('other','root','complete')),now)
+        a=Action('missing-context',s.agent_id,'bilibili','robot',ref,'你好',now,now+100,reply_to='target',topic_class='casual')
+        reason=runtime.engine.action_policy(a,now)
+        assert '上下文' in reason and '本次未判定为敏感' in reason
     finally:runtime.close()
