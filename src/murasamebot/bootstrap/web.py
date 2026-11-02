@@ -130,7 +130,8 @@ def handler_for(config_path: Path, token: str, *, receivers=None):
                     self.response(200,receivers.status() if receivers else {"managed":False,"platforms":{}})
                 elif path.startswith('/api/platforms/'):
                     from murasamebot.bootstrap.console import platform_console
-                    self.response(200,platform_console(config,path.rsplit('/',1)[-1]))
+                    action_status = parse_qs(urlparse(self.path).query).get('status',['all'])[0]
+                    self.response(200,platform_console(config,path.rsplit('/',1)[-1],action_status=action_status))
                 elif path == "/api/requests":
                     self.response(200,{"settings":config.data["requests"],"private_poll_seconds":config.data["bilibili"]["private_poll_seconds"],
                         "status":prepare_store(config).request_status(time.time(),RequestSettings(**config.data["requests"]))})

@@ -14,9 +14,9 @@ from murasamebot.application.artwork import ArtDiscovery, ArtSettings
 from murasamebot.application.vision import VisionService, VisionSettings
 from murasamebot.application.expressions import ExpressionService, ExpressionSettings
 from murasamebot.application.memory import MemoryService, MemorySettings
-from murasamebot.application.review import review_satisfied
+from murasamebot.application.review import review_satisfied, publication_review_required
 from murasamebot.bootstrap.config import Config
-from murasamebot.bootstrap.platforms import build_modules, close_resources, module_resources, prepare_platform_state
+from murasamebot.bootstrap.platforms import build_modules, close_resources, module_resources, prepare_platform_state, private_review_exempt_platforms
 from murasamebot.domain.models import Action, PlatformError, stable_id
 from murasamebot.domain.topics import blocked, document_topic, local_topic
 from murasamebot.application.scheduling import next_window
@@ -30,7 +30,7 @@ def prepare_store(config: Config) -> SQLiteStore:
     store = SQLiteStore(config.file("database"), config.data["agent_id"])
     prepare_platform_state(config, store)
     if config.data["mode"] == "draft":
-        store.enable_review_mode()
+        store.enable_review_mode(review_exempt_platforms=private_review_exempt_platforms(config))
     stamp = stable_id(config.data.get("bindings", []))
     if store.get_setting("configured_binding_keys") is None and store.get_setting("binding_config_stamp") == stamp:
         store.set_setting("configured_binding_keys", sorted((str(row["person_id"]), str(row["platform"])) for row in config.data.get("bindings", [])))
@@ -277,6 +277,7 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                         or policy.open_at(now, current.data["timezone"]) != now):
                     return "自主发布设置已变化或不在允许时段"
             if (current.data["mode"]=="reviewed" and current.data["review"]["strategy"]!=config.data["review"]["strategy"]
+                    and publication_review_required(action,private_review_exempt_platforms(current))
                     and not action.approved_manually and action.kind not in {"like","coin"}
                     and not review_satisfied(action,current.data["review"]["strategy"])):
                 return "审核策略已经变化，需要按当前策略重新审核"
@@ -404,5 +405,6 @@ def readiness(runtime: Runtime) -> dict:
         "warnings": [w for warnings in runtime.store.get_setting("inbox_warnings", {}).values() for w in warnings],
         "review_strategy": runtime.config.data["review"]["strategy"],
         "queues": runtime.store.queue_status(review_strategy=runtime.config.data["review"]["strategy"],
+            review_exempt_platforms=runtime.engine.review_exempt_platforms(),
             **({"routes": runtime.engine.routing()} if runtime.engine.routing else {})),
     }

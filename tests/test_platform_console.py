@@ -145,3 +145,37 @@ def test_memory_platform_filter_precedes_feed_limit_and_agent_boundary(console,n
         assert s.memory_commit(records,[{'kind':'diary','text':'当天的小记录','sources':[records[0]['record_id']]}],'diary',s.get_setting('memory_epoch',0),now+(100 if platform=='bilibili' else 0))
     assert s.memory_feed('diary',limit=1,platform='qq')[0]['platforms']==['qq']
     assert len(client.get('/api/memory/journals').json()['diary'])==2
+@pytest.mark.parametrize("status,expected", [
+    ("all", {"accepted", "draft", "reviewing", "queued", "sending", "failed", "unknown", "cancelled", "expired"}),
+    ("sent", {"accepted"}), ("review", {"draft", "reviewing"}),
+    ("pending", {"queued", "sending"}), ("failed", {"failed"}),
+    ("unknown", {"unknown"}), ("closed", {"cancelled", "expired"}),
+])
+def test_action_status_filters_before_limit_and_keeps_counts(console, now, status, expected):
+    _, store, client = console
+    states = ["accepted", "draft", "reviewing", "queued", "sending", "failed", "unknown", "cancelled", "expired"]
+    with store.connection() as db:
+        for index, state in enumerate(states):
+            action = Action(str(index),store.agent_id,"qq","456",None,"合成回复",now+index,now+1000)
+            db.execute("INSERT INTO actions(agent_id,action_id,payload,content_key,dedup_key,kind,state,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (store.agent_id,action.action_id,json.dumps(action.to_dict()),"","",action.kind,state,action.created_at,action.expires_at))
+    response = client.get('/api/platforms/qq',params={"status":status})
+    assert response.status_code == 200
+    data = response.json()
+    assert {row["state"] for row in data["actions"]} == expected
+    assert data["action_counts"] == dict.fromkeys(states,1)
+    assert data["action_status"] == status
+    assert client.get('/api/platforms/bilibili',params={"status":status}).json()["actions"] == []
+
+
+def test_status_filter_finds_an_older_failure_and_rejects_unknown_filter(console, now):
+    _, store, client = console
+    with store.connection() as db:
+        for index in range(61):
+            action = Action(str(index),store.agent_id,"qq","456",None,"合成回复",now+index,now+1000)
+            db.execute("INSERT INTO actions(agent_id,action_id,payload,content_key,dedup_key,kind,state,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (store.agent_id,action.action_id,json.dumps(action.to_dict()),"","",action.kind,"failed" if index==0 else "accepted",action.created_at,action.expires_at))
+    assert not any(row["state"]=="failed" for row in client.get('/api/platforms/qq').json()["actions"])
+    selected = client.get('/api/platforms/qq?status=failed').json()
+    assert [row["action_id"] for row in selected["actions"]] == ["0"]
+    assert client.get('/api/platforms/qq?status=invalid').status_code == 400

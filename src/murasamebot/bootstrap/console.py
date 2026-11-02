@@ -4,11 +4,11 @@ import time
 from murasamebot.bootstrap.runtime import prepare_store
 
 
-def platform_console(config, platform):
+def platform_console(config, platform, *, action_status="all"):
     if platform not in {'qq','bilibili'}:
         raise ValueError('未知平台模块')
     store = prepare_store(config)
-    result = store.platform_console(platform)
+    result = store.platform_console(platform,action_status=action_status)
     owner = store.binding(config.data['owner_person_id'],platform)
     result.update(platform=platform,enabled=platform in config.enabled_platforms,
         owner_id=owner['external_id'] if owner else '',owner_bound=bool(owner))

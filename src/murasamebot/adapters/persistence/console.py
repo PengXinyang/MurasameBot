@@ -2,8 +2,17 @@
 import json
 
 
+ACTION_STATUS_GROUPS = {
+    "all": (), "sent": ("accepted",), "review": ("draft", "reviewing"),
+    "pending": ("queued", "sending"), "failed": ("failed",),
+    "unknown": ("unknown",), "closed": ("cancelled", "expired"),
+}
+
+
 class SQLiteConsole:
-    def platform_console(self, platform, *, limit=50):
+    def platform_console(self, platform, *, limit=50, action_status="all"):
+        if action_status not in ACTION_STATUS_GROUPS:
+            raise ValueError("未知消息状态筛选")
         limit = min(100, max(1, limit))
         with self.connection() as db:
             tasks = db.execute("""SELECT t.*,r.payload AS route_payload,
@@ -24,7 +33,9 @@ class SQLiteConsole:
                 WHERE a.agent_id=? AND (json_extract(a.payload,'$.platform')=? OR
                     COALESCE(json_extract(r.payload,'$.source_platform'),json_extract(e.payload,'$.platform'))=?)"""
             args = (self.agent_id,platform,platform)
-            actions = [dict(r) for r in db.execute("SELECT a.* " + action_from + " ORDER BY a.created_at DESC,a.action_id LIMIT ?",(*args,limit))]
+            states = ACTION_STATUS_GROUPS[action_status]
+            state_sql = " AND a.state IN (" + ",".join("?" for _ in states) + ")" if states else ""
+            actions = [dict(r) for r in db.execute("SELECT a.* " + action_from + state_sql + " ORDER BY a.created_at DESC,a.action_id LIMIT ?",(*args,*states,limit))]
             action_counts = dict(db.execute("SELECT a.state,COUNT(*) " + action_from + " GROUP BY a.state",args))
             records = [dict(r) for r in db.execute("""SELECT * FROM conversation_records
                 WHERE agent_id=? AND platform=? AND active=1 AND visibility!='group' ORDER BY occurred_at DESC,record_id DESC LIMIT ?""",
@@ -40,4 +51,5 @@ class SQLiteConsole:
                     WHERE agent=? AND state='pending'""",(self.agent_id,)).fetchone()
                 buffered = dict(zip(('messages','first_at','last_at'),row))
         return {'tasks':task_rows,'actions':actions,'records':records,'pending_events':pending,
-                'event_counts':counts,'action_counts':action_counts,'buffered':buffered,'limit':limit}
+                'event_counts':counts,'action_counts':action_counts,'buffered':buffered,'limit':limit,
+                'action_status':action_status}

@@ -1,6 +1,9 @@
 from murasamebot.bootstrap.platforms import PlatformModule
 
 
+PRIVATE_POLICY = {"multilingual": True, "topic_filter": False, "publication_review": False}
+
+
 DEFAULTS = {"api_url":"http://127.0.0.1:3000", "robot_id":"", "access_token":"",
     "callback_secret":"", "quiet_seconds":30, "max_wait_seconds":180, "max_reply_messages":3,
     "callback_port":8767}
@@ -67,7 +70,7 @@ def build_module(config, store):
     adapter.group_settings=config.data['qq_groups']
     adapter.call_settings=config.data['qq_calls']
     module = QQModule("qq",adapter,frozenset({"private_reply", "task_result", "proactive_private", "autonomous_post", "group_reply", "call_reply"}),poll_seconds=1,
-        private_policy={"multilingual":True,"topic_filter":False},autonomy_key="qq_autonomy",
+        private_policy=dict(PRIVATE_POLICY),autonomy_key="qq_autonomy",
         autonomy_activity=adapter.pending_private_activity,public_autonomy_key="qq_space")
     module.private_image_reader = HTTPImageReader(hosts=IMAGE_HOSTS,referer="")
     module.resources = (module.private_image_reader,)

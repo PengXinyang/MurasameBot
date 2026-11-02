@@ -18,7 +18,7 @@ def setup(factory, **overrides):
             if before_write and not before_write():return Receipt("failed",detail="guarded")
             self.sent.append(action);return Receipt("accepted","qq-message")
     q=QQ();e.sinks["qq"]=q;e.private_access["qq"]=q
-    e.private_policies["qq"]={"multilingual":True,"topic_filter":False}
+    e.private_policies["qq"]={"multilingual":True,"topic_filter":False,"publication_review":False}
     e.routing=lambda:(("bilibili","robot"),("qq","qq-bot"))
     e.request_route=lambda event,person:owner_video_route(s,event,person,provider="bilibili",private_platform="qq",public_platform="bilibili",accounts=dict(e.routing())) if event.platform=="qq" else None
     e.content_urls["bilibili"]=lambda ref:"https://www.bilibili.com/video/av"+ref.external_id
@@ -171,7 +171,7 @@ def test_ordinary_private_conversation_does_not_become_recurring_task(factory,no
     assert not s.active_tasks("owner")
 
 
-def test_real_private_message_ack_and_task_result_are_separate_reviewed_actions(factory,now):
+def test_private_ack_and_task_result_skip_publication_review(factory,now):
     e,s,m,b,q=setup(factory,model_review=True,review_strategy="inline")
     old=m.decide
     def decide(op,p):
@@ -184,7 +184,7 @@ def test_real_private_message_ack_and_task_result_are_separate_reviewed_actions(
     assert e.run_due_task(now)
     assert e.dispatch_one(now) and e.dispatch_one(now+2)
     assert [a.kind for a in q.sent]==["private_reply","task_result"]
-    assert all(a.review_state=="passed" for a in q.sent)
+    assert all(a.review_state=="not_required" for a in q.sent)
     chat=next(p for op,p in m.calls if op=="private_chat")
     assert chat["intent_result"]["delivery_platform"]=="qq"
 
@@ -265,7 +265,7 @@ def test_private_sensitive_video_uses_private_provider_and_preserves_original_la
     assert e.dispatch_one(now) and q.sent and not b.sent
     assert "と解説" in q.sent[0].text and s.inspect("tasks")[0]["state"]=="completed"
     policy=next(p["private_policy"] for op,p in m.calls if op=="private_task_result")
-    assert policy=={"multilingual":True,"topic_filter":False}
+    assert policy=={"multilingual":True,"topic_filter":False,"publication_review":False}
 
 
 @pytest.mark.parametrize("flag",[True,False])
@@ -278,7 +278,7 @@ def test_qq_private_policy_cannot_relax_public_bilibili_task(factory,now,flag):
     assert not s.inspect("actions") and not b.sent and not q.sent
 
 
-def test_multilingual_private_result_independent_review_receives_private_policy(factory,now):
+def test_multilingual_private_result_skips_independent_review(factory,now):
     e,s,m,b,q=setup(factory,model_review=True,review_strategy="independent")
     old=m.decide
     def decide(op,p):
@@ -289,7 +289,8 @@ def test_multilingual_private_result_independent_review_receives_private_policy(
         return result
     m.decide=decide
     request(e,now);assert e.run_due_task(now) and e.dispatch_one(now)
-    assert q.sent and next(p for op,p in m.calls if op=="review_action")["private_policy"]["multilingual"]
+    assert q.sent and not any(op=="review_action" for op,p in m.calls)
+    assert next(p for op,p in m.calls if op=="private_task_result")["private_policy"]["publication_review"] is False
 
 
 def test_real_module_assembly_limits_relaxed_policy_to_qq(tmp_path):
@@ -301,7 +302,7 @@ def test_real_module_assembly_limits_relaxed_policy_to_qq(tmp_path):
     Config(path).local_path.write_text(yaml.safe_dump({"platforms":{"qq":{"enabled":True}}}),encoding="utf-8")
     runtime=build(Config(path))
     try:
-        assert runtime.engine.private_policies=={"qq":{"multilingual":True,"topic_filter":False}}
+        assert runtime.engine.private_policies=={"qq":{"multilingual":True,"topic_filter":False,"publication_review":False}}
         assert "bilibili" in runtime.engine.private_content_providers
     finally:runtime.close()
 

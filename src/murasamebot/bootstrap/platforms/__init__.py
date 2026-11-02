@@ -60,6 +60,14 @@ def default_factories():
     return {"bilibili": bilibili, "qq": qq}
 
 
+def private_review_exempt_platforms(config):
+    # Policy metadata only: no protocol client or account access is needed here.
+    from murasamebot.bootstrap.platforms.qq import PRIVATE_POLICY
+    policies = {"qq": PRIVATE_POLICY}
+    return tuple(name for name in config.enabled_platforms
+                 if policies.get(name, {}).get("publication_review") is False)
+
+
 def prepare_platform_state(config, store):
     # Compatibility checkpoint belongs to the Bilibili module, not shared state.
     if "bilibili" in config.enabled_platforms:

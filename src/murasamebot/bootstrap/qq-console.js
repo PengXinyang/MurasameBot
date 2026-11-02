@@ -1,3 +1,6 @@
+let qqActionStatus=storedActionStatus('murasame_qq_action_status');
+async function chooseQQActionStatus(status){if(!Object.hasOwn(actionStatusGroups,status))return;qqActionStatus=status;sessionStorage.setItem('murasame_qq_action_status',status);await refresh()}
+
 /* QQ owns its controls and projections; memory remains in shared-memory.js. */
 function loadQQSettings() {
   for(const n of document.querySelectorAll('[data-qq-learning]'))n.value=String(config.qq_learning[n.dataset.qqLearning]);
@@ -124,6 +127,8 @@ function renderQQConsole(data) {
     const scope=event.visibility==='group'?`群 ${esc(event.thread_root)} · ${esc(event.actor_name||event.actor_id)}（${esc(event.actor_id)}）`:'主人私聊';
     return `<div class="row"><span class="pill state-${esc(r.state)}">${esc(({pending:'等待处理',processing:'正在生成',failed:'处理失败'})[r.state])}</span><div class="message-body">${esc(event.text || (event.kind==='group_window'?'群讨论窗口：判断接话或旁观':''))}</div><div class="meta">${scope} · ${esc(time(event.occurred_at))} · 图片 ${event.images?.length || 0} 张${r.next_at ? ' · 下次重试 '+esc(time(r.next_at)) : ''}${r.reason ? ' · '+esc(r.reason) : ''}</div></div>`;
   });
+  renderActionStatusFilter('qq-action-filter',qqActionStatus,data.action_counts,chooseQQActionStatus);
+  document.querySelector('#qq-action-loaded').textContent=`当前状态下最近 ${data.actions.length} 条记录，最多显示 ${data.limit} 条。`;
   rows('qq-actions', data.actions, renderActionRow);
   rows('qq-tasklist', data.tasks, renderTaskRow);
   document.querySelector('#qq-task-count').textContent = `最近 ${data.tasks.length} 条委托（最多 ${data.limit} 条）`;

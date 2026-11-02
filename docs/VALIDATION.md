@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-11-02：QQ免发布审核与前端状态筛选
+
+专项86项通过，0失败/错误/跳过，35.403秒（.pytest-tmp/qq-publication-targeted-final.xml）。最终完整1012项通过，0失败/错误/跳过，257.971秒（.pytest-tmp/qq-publication-full-final.xml）；按用户要求通过--ignore=tests/test_persona_scope.py排除人设范围文件，不把排除算作测试通过或跳过。154个源码/测试/脚本/配置文件在最终回归前后SHA-256一致。新增32项覆盖免审核但仍核验好友/来源/暂停、全局draft与独立审核模式、真实模块策略、原草稿不重放、全部筛选状态/跨平台隔离、较旧失败在limit前检索、未知筛选拒绝，以及Node实际渲染器/选择保持；原公开投递审核继续通过。
+
+使用本机Anaconda Python 3.14.6，现有pytest/httpx/yaml/Pillow；默认沙箱首次专项7项因本机连接WinError10013失败，允许本机回环后专项通过。首次完整1007通过、5项缺少socksio/qrcode失败；通过7890代理、保留TLS校验，仅安装这两项到.pytest-tmp/test-deps，再以PYTHONPATH加入该目录后完整复跑通过，未向全局环境安装。
+
+真实无头Edge使用合成记录、隔离库/新profile和随机回环服务，QQ/B站各1440/390宽共4视图，28次七类筛选/计数/目标记录、各页选择独立和刷新保持均通过，无JS异常/横向溢出，已检查截图。首次复跑读到旧profile的DevTools端口而连接失败，后用每次独立profile重新验证通过；测试用--no-sandbox仅在忽略的预览脚本，不进入产品。结果在.pytest-tmp/qq-filter-browser/report.json和截图。
+
+Python AST、外部/内联JavaScript语法、HTML ID唯一性、文档链接和git diff --check通过。模型/OneBot/B站均为模拟或禁用，不读取正式账号数据、不启动worker、不执行社交写入；平台受理与客户端收到不混为一谈。界面/功能需升级进程后才生效，真实私聊体验尚未验收；测试产物/依赖/预览脚本不提交。
+
 ## 2026-11-02：进度与测试证据盘点（仅文档）
 
 基准业务提交`978d55b`。核对AGENTS、项目记忆、Git状态/历史、主要实现和反例测试，更新STATUS/ROADMAP及索引、架构、运行时记忆与开发日志。真实测试结论均来自下方已有记录，本轮不访问账号/模型/平台/容器运行数据，也未重新核验历史JUnit/截图。未运行新的平台写入、worker或浏览器验收。

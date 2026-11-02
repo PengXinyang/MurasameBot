@@ -16,7 +16,7 @@ from murasamebot.application.memory import MemoryService
 from murasamebot.application.autonomy import AutonomyService
 from murasamebot.application.social import SocialService
 from murasamebot.domain.topics import blocked, combined_topic, document_topic, local_topic
-from murasamebot.application.review import inline_review, review_satisfied
+from murasamebot.application.review import inline_review, review_satisfied, publication_review_required
 from murasamebot.domain.models import Action, ContentRef, Document, Event, ModelError, Persona, PlatformError, PolicyError, Receipt, stable_id
 from murasamebot.ports import ActionSink, ContentProvider, ModelGateway, PrivateMessageAccess, StateStore
 
@@ -88,6 +88,10 @@ class SocialEngine:
         text = checked_text(text, limit, multilingual=multilingual)
         return text + "".join(e.token for e in emojis), emojis
 
+    def review_exempt_platforms(self):
+        return tuple(platform for platform, policy in self.private_policies.items()
+                     if policy.get("publication_review") is False)
+
     def popularity_allowed(self, document):
         binding = self.store.binding(self.settings.owner_person_id, document.ref.provider) if document else None
         accounts = dict(self.routing()) if self.routing else {self.settings.platform: self.settings.account_id}
@@ -107,7 +111,11 @@ class SocialEngine:
         if action.owner_activity_version and (not self.owner_activity or self.owner_activity.guard(action,now)):
             return False
         draft = self.settings.draft
-        if self.settings.model_review and self.settings.review_strategy=="inline":
+        if not publication_review_required(action, self.review_exempt_platforms()):
+            draft = False
+            action = replace(action, review_state="not_required", review_method="channel_policy",
+                             review_reason="当前私聊渠道无需发布审核")
+        elif self.settings.model_review and self.settings.review_strategy=="inline":
             action,needs_human = inline_review(action,result)
             draft = draft or needs_human
         return self.store.enqueue_action(action,draft=draft,now=now)
@@ -794,7 +802,8 @@ class SocialEngine:
         now = time.time() if now is None else now
         if not self.settings.model_review or self.settings.draft or self.paused():
             return False
-        action = self.store.claim_review_action(now,strategy=self.settings.review_strategy, **({"routes": self.routing()} if self.routing else {}))
+        action = self.store.claim_review_action(now,strategy=self.settings.review_strategy,
+            review_exempt_platforms=self.review_exempt_platforms(), **({"routes": self.routing()} if self.routing else {}))
         if action is None:
             return False
         if self.settings.review_strategy=="inline":
@@ -816,6 +825,7 @@ class SocialEngine:
                                          required_review_method=self.settings.review_strategy if self.settings.model_review and pre_reviewed_only else "",
                                          autonomous_kinds=self.autonomy.allowed_kinds(now),
                                          task_window_open=next_window(now,self.settings.timezone,self.settings.windows,self.settings.weekdays)==now,
+                                         review_exempt_platforms=self.review_exempt_platforms(),
                                          **({"routes": self.routing()} if self.routing else {}))
         if action is None:
             return False
@@ -842,7 +852,8 @@ class SocialEngine:
                 if access is None or not access.allows_private_reply(action.account_id, action.recipient_id):
                     self.store.finish_action(action.action_id, Receipt("failed", detail="发送前不满足私信回复关系限制"), now)
                     return True
-            if self.settings.model_review and not action.approved_manually and action.kind not in {"like", "coin"} and not review_satisfied(action,self.settings.review_strategy):
+            if (self.settings.model_review and publication_review_required(action,self.review_exempt_platforms())
+                    and not action.approved_manually and action.kind not in {"like", "coin"} and not review_satisfied(action,self.settings.review_strategy)):
                 if self.settings.review_strategy=="inline":
                     self.store.record_action_review(action.action_id,"unavailable","旧队列缺少同次判断，请人工审核或重新生成",now,method="inline")
                     return True

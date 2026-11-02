@@ -32,7 +32,7 @@ def setup(factory, **policy):
     target = AutonomyTarget('qq','456',settings,activity=adapter.pending_private_activity,scope='qq')
     e.autonomy.targets=(target,)
     e.private_access['qq']=adapter;e.sinks['qq']=adapter
-    e.private_policies['qq']={'multilingual':True,'topic_filter':False}
+    e.private_policies['qq']={'multilingual':True,'topic_filter':False,'publication_review':False}
     e.memory_service.shared_owner_private=True
     proposal={'decision':'send','text':'刚才聊的那个话题，吾辈又有个小想法。','delay_minutes':10,'can_send':True,'review_reason':'有依据的自然接话'}
     def decide(operation,payload):
@@ -116,12 +116,13 @@ def test_no_friend_no_model_and_skip_spends_decision_budget(factory,now):
     finally:a.close()
 
 
-def test_rejected_inline_output_requires_human_review(factory,now):
+def test_private_initiative_does_not_require_inline_publication_verdict(factory,now):
     e,s,m,a,proposal,writes,_=setup(factory)
     try:
         proposal['can_send']=False
-        assert e.autonomy.run(now) and s.inspect('actions')[0]['state']=='draft'
-        assert not e.dispatch_one(now+600,pre_reviewed_only=True) and not writes
+        assert e.autonomy.run(now) and s.inspect('actions')[0]['state']=='queued'
+        assert e.dispatch_one(now+600,pre_reviewed_only=True) and len(writes)==1
+        assert not any(op=='review_action' for op,p in m.calls)
     finally:a.close()
 
 

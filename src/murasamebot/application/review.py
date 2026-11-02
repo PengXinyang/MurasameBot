@@ -4,6 +4,12 @@ from dataclasses import replace
 from murasamebot.domain.models import Action
 
 
+def publication_review_required(action: Action, exempt_platforms=()) -> bool:
+    """Only composition-owned private text policies may exempt a publication."""
+    return not (action.platform in exempt_platforms and action.visibility == "private"
+                and action.kind in {"private_reply", "proactive_private", "task_result"})
+
+
 def inline_review(action: Action, result: dict) -> tuple[Action, bool]:
     """Bind a typed verdict to the actual rendered text; missing verdicts need a human."""
     allowed = result.get("can_send")
