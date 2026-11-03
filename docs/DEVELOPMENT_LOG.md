@@ -1,5 +1,11 @@
 # 开发日志与当前状态
 
+## 2026-11-03：DeepSeek API提示词与“破甲”来源调研（仅文档）
+
+在关闭思考的1c25860之后，继续核对官方Thinking Mode、模型映射与Beta前缀补全，以及togg53192-cmd/jailbreaks的4.1提示词和xqpsec/dsh-jailbreak源码/报告。新增DEEPSEEK_API_PROMPT_RESEARCH并纳入索引，区分纯system文本、普通assistant轨迹注入和正式prefix=true功能。作者17/20仅是固定任务与作者判分的自报结果，本轮未复现，不能代表当前丛雨成功率；未发现经本项目验证的通用方案。
+
+本轮仅整理已读一手来源，不安装插件、使用真实API/密钥、切换Beta或修改业务/人设/权限。记录普通聊天合成场景的后续对照建议，尚未开发评测或运行实验。UTF-8、文档相对链接及git diff --check完成后按明确文件范围提交推送；本轮不重复运行业务测试，上一项网关/视觉61项通过的范围见下条。
+
 ## 2026-11-03：关闭DeepSeek官方请求的思考模式
 
 核对官方Thinking Mode文档后，在共享ChatCompletionsModel按精确hostname添加thinking.type=disabled；当前本机模型已解析为deepseek-flash且使用官方地址。所有走该官方地址的调用统一关闭思考，包括QQ/B站聊天、群学习、审核和视觉；其他提供商不附加DeepSeek厂商参数。原JSON输出、温度和输出额度配置保留，人设及发布/身份门禁不变。新增31项MockTransport请求捕获回归，覆盖4种官方地址形式×7类操作以及其他服务/伪装后缀/本机网关不受影响。
