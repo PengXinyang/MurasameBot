@@ -1,5 +1,12 @@
 # 验证记录
 
+## 2026-11-03：DeepSeek关闭思考请求验证
+
+D:/anaconda3/python.exe scripts/run_tests.py tests/test_model_gateway.py tests/test_vision.py执行61通过、0失败，5.72秒，报告.pytest-tmp/deepseek-thinking-targeted.xml。新增31项捕获实际HTTP序列化请求体，确认官方根/v1/beta/主机名大小写各类地址的私人/公开/群/学习/通话/审核/视觉请求均带thinking.type=disabled，JSON输出格式和消息角色保留；其他厂商、伪装后缀及本机兼容服务不发送字段。未运行全量，不将历史全套结果算作本次新结果。
+
+使用模拟HTTP与隔离库，未调用真实API、使用真实密钥请求或发送社交消息。CIM受沙箱限制后以只读权限核对，未发现匹配本项目的原生Python管理台/worker进程。Docker Desktop Linux Engine管道不存在，未启动Engine或容器，也不推断其他部署状态。用户需要将新代码加载到实际运行环境；官方服务端具体返回/性能未实测。原有未跟踪人设备份未改动。
+
+
 ## 2026-11-02：QQ免发布审核与前端状态筛选
 
 专项86项通过，0失败/错误/跳过，35.403秒（.pytest-tmp/qq-publication-targeted-final.xml）。最终完整1012项通过，0失败/错误/跳过，257.971秒（.pytest-tmp/qq-publication-full-final.xml）；按用户要求通过--ignore=tests/test_persona_scope.py排除人设范围文件，不把排除算作测试通过或跳过。154个源码/测试/脚本/配置文件在最终回归前后SHA-256一致。新增32项覆盖免审核但仍核验好友/来源/暂停、全局draft与独立审核模式、真实模块策略、原草稿不重放、全部筛选状态/跨平台隔离、较旧失败在limit前检索、未知筛选拒绝，以及Node实际渲染器/选择保持；原公开投递审核继续通过。

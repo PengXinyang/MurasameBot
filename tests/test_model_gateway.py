@@ -6,6 +6,34 @@ from murasamebot.adapters.models.chat_completions import ChatCompletionsModel
 from murasamebot.domain.models import ModelError
 
 
+@pytest.mark.parametrize("base",["https://api.deepseek.com","https://api.deepseek.com/v1/","https://api.deepseek.com/beta","https://API.DEEPSEEK.COM"])
+@pytest.mark.parametrize("operation",["private_chat","reply","group_chat","group_extract","call_chat","review_action","describe_images"])
+def test_official_deepseek_disables_thinking_for_all_operations(factory,base,operation):
+    _,store,_,_=factory()
+    def handle(request):
+        body=json.loads(request.content)
+        assert body['thinking']=={'type':'disabled'}
+        assert body['response_format']=={'type':'json_object'}
+        assert body['messages'][0]['role']=='system' and body['messages'][1]['role']=='user'
+        return httpx.Response(200,json={'choices':[{'message':{'content':'{"decision":"skip"}'},'finish_reason':'stop'}]})
+    gateway=ChatCompletionsModel(base_url=base,name='deepseek-flash',api_key='fake-key',store=store,
+        timezone='Asia/Hong_Kong',daily_limit=1,client=httpx.Client(transport=httpx.MockTransport(handle)))
+    try:assert gateway.decide(operation,{'message':'合成测试'})['decision']=='skip'
+    finally:gateway.close()
+
+
+@pytest.mark.parametrize("base",['https://model.invalid/v1','https://api.deepseek.com.example.invalid/v1','http://127.0.0.1:9999/v1'])
+def test_other_providers_do_not_receive_deepseek_thinking_parameter(factory,base):
+    _,store,_,_=factory()
+    def handle(request):
+        assert 'thinking' not in json.loads(request.content)
+        return httpx.Response(200,json={'choices':[{'message':{'content':'{"decision":"skip"}'}}]})
+    gateway=ChatCompletionsModel(base_url=base,name='deepseek-flash',api_key='',store=store,
+        timezone='Asia/Hong_Kong',daily_limit=1,client=httpx.Client(transport=httpx.MockTransport(handle)))
+    try:gateway.decide('private_chat',{'message':'合成测试'})
+    finally:gateway.close()
+
+
 def test_missing_routing_rules_are_not_reported_as_model_connection_failure(factory):
     from murasamebot.adapters.proxy_rules import ProxyRulesUnavailable
     _,store,_,_=factory()

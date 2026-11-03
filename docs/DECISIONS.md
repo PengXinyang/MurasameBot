@@ -1,5 +1,10 @@
 # 已确认的重要决策
 
+## D56：DeepSeek官方接口显式关闭思考（2026-11-03）
+
+用户要求先关闭思考模式，再继续只读检索API破甲。当前网关之前未发送thinking，[DeepSeek官方文档](https://api-docs.deepseek.com/guides/thinking_mode/)默认启用。适配器对URL解析后hostname精确等于api.deepseek.com的请求增加thinking.type=disabled，覆盖普通/v1/beta路径、共享文本和视觉入口；不向其他兼容服务或名称相似的域名发送厂商参数。无需模型名硬编码、无需新增平台分支，不修改人设、发布审核/权限/输出格式或记忆。关闭思考不是关闭服务端安全策略。本轮不安装破甲插件、不注入越狱提示词。
+
+
 ## D55：QQ私人文字免发布审核与消息状态筛选（2026-11-02）
 
 用户明确要求QQ私聊生成的消息不需要平台审核，并将正常发送、待审核、待处理和失败分开筛选。QQ模块private_policy增加publication_review=false，限private_reply、proactive_private、task_result且visibility=private。生成不要求发布判断，忽略可选旧can_send；动作标记not_required而非伪造模型通过。共同inline/independent/draft不阻塞这些消息，队列审核领取/计数、draft模式装配和实际发送使用同一渠道范围。主人的好友/绑定/收件人、来源/任务/记忆/配置、暂停/额度/间隔及unknown不重放仍是程序硬约束；skip和格式错误仍不发送。

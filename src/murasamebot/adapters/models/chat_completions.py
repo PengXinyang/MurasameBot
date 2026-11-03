@@ -5,6 +5,7 @@ import json
 import re
 import time
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -303,6 +304,10 @@ class ChatCompletionsModel:
             "temperature": 0.5 if operation != "extract_intent" else 0.1,
             "response_format": {"type": "json_object"},
         }
+        # DeepSeek enables thinking by default. Keep its vendor parameter scoped
+        # to the official endpoint so other compatible providers stay compatible.
+        if urlsplit(self.base_url).hostname == "api.deepseek.com":
+            request["thinking"] = {"type": "disabled"}
         if self.max_output_tokens is not None:
             request["max_tokens"] = self.max_output_tokens
         diagnostic = {"operation": operation, "max_output_tokens": self.max_output_tokens}
