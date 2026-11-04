@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-11-04：指定私人助手提示词追加与加载
+
+以55ab442的profile为基准，使用D:/anaconda3/python.exe -X utf8解析修改前后YAML，确认字段集合一致、仅private_owner_context变化、旧字段值为新值的完整前缀；用户给出的五句原文均存在。直接调用现有load_persona，确认五句均载入private_owner_context，未打印原有私人内容。原始来源、公共风格、示例及程序无本轮差异，git diff --check通过。
+
+本轮为可逆的人设追加，未新增/运行人设范围或协议单测、全量回归、真实API或平台写入；不把先前测试结果计为本轮验证。没有正式进程重启、卷同步或自然度/效果验收。更新project memory并仅提交明确文件清单，已有部署改动和本地运行产物排除。
+
 ## 2026-11-04：社交机器人改造方案现状与模拟分支核对
 
 业务基准55ef1cb。本轮只修改SOCIAL_CHAT_MODEL_PLAN及索引/状态/开发与验证记忆/前一专题，不改人设、业务、正式配置或数据。只读核对DeepSeek官方Chat Completions/Thinking文档，确认当前结束原因还包括aborted与insufficient_system_resource，且JSON模式下stop可能只有空格；没有重新核验或复述未查证的服务条款细节。

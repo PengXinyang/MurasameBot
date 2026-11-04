@@ -1,5 +1,13 @@
 # 开发日志与当前状态
 
+## 2026-11-04：追加用户指定的私人AI助手提示词
+
+用户要求再次修改人设并增加其提供的五句提示词。以55ab442为基准，将原文追加到character/text_profile.yml的private_owner_context末尾，增加“私人AI助手交流方式”标题；使用现有私人用途人设装配，不另改模型协议或角色身份。原私人上下文为完整前缀，公共背景、style、owner_style、10组examples、source_sha256以及原始settings.yml/备份保持。没有把私人助手定位或敏感词表述扩展为新的身份、年龄核验、权限或发布授权，程序原逻辑未改。
+
+验证：严格YAML解析、唯一变更字段检查、原私人上下文前缀保持、五句原文存在及load_persona实际加载检查通过，git diff --check通过。未新增单测、运行人设范围/全量回归或调用真实模型/平台，不将配置能加载称为真实聊天效果。未改正式数据、启动或重启进程。标准worker下一任务重新装配时可读取实际profile，正在生成的任务和旧草稿不重写；Docker既有卷需只追加这段内容并保留本地私有字段。
+
+开发记录、验证与人设操作专题同步，来源/记忆/任务/渠道与unknown保护保持；此前aborted/insufficient_system_resource结果分类、维护公平性、备份及真实验收待办仍未修复。仅提交本轮profile与文档，保留环境模板、Docker/compose/run.py等已有差异，按7890代理自动推送。
+
 ## 2026-11-04：将参考方案整理为社交对话链路改造计划（未实施）
 
 用户提供分层提示词、场景/摘要、多模型及错误处理建议，随后明确项目仍为社交机器人。以55ef1cb核对模型网关、ModelGateway/ModelError、Engine、事件重试、记忆/社交状态、Runtime和WorkerCoordinator，整理SOCIAL_CHAT_MODEL_PLAN并更新索引、STATUS和前一迁移专题。将场景转换为真实会话快照，将剧情摘要转换为现有来源记忆，角色主动性沿用Autonomy/协调器/outbox；不新建RoleplayEngine、小说/剧情系统或另一套人物关系库，不改台词输出方式。
