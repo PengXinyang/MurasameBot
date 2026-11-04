@@ -257,7 +257,7 @@ def main(argv=None):
             elif args.command == "comment-check":
                 from dataclasses import asdict
                 from murasamebot.application.publication import PublicationService
-                show(asdict(PublicationService(runtime.store, {name: module.adapter for name, module in runtime.modules.items()}).check(args.id)))
+                show(asdict(PublicationService(runtime.store, {name: module.adapter for name, module in runtime.modules.items()}).check(args.id, manual=True)))
             elif args.command == "ingest":
                 data = json.loads(args.file.read_text(encoding="utf-8"))
                 added = runtime.engine.ingest(Event.from_dict(data))

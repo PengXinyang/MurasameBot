@@ -289,7 +289,7 @@ def handler_for(config_path: Path, token: str, *, receivers=None):
                     from murasamebot.application.publication import PublicationService
                     runtime = build(config)
                     try:
-                        result = PublicationService(store, {name: module.adapter for name, module in runtime.modules.items()}).check(str(data["id"]))
+                        result = PublicationService(store, {name: module.adapter for name, module in runtime.modules.items()}).check(str(data["id"]), manual=True)
                         self.response(200, asdict(result))
                     finally:
                         runtime.close()

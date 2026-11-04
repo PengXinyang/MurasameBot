@@ -10,7 +10,7 @@ class PublicationService:
     def __init__(self, store: StateStore, probes: Mapping[str, PublicationProbe]):
         self.store, self.probes = store, probes
 
-    def check(self, action_id: str) -> PublicationCheck:
+    def check(self, action_id: str, *, manual: bool = False) -> PublicationCheck:
         action, external_id = self.store.publication_target(action_id)
         probe = self.probes.get(action.platform)
         if probe is None:
@@ -20,7 +20,8 @@ class PublicationService:
             raise PolicyError("该条内容正在核查，请稍后刷新")
         try:
             try:
-                result = probe.check_publication(action, external_id)
+                result = (probe.check_publication(action, external_id, manual=True) if manual
+                          else probe.check_publication(action, external_id))
             except PlatformError as exc:
                 if exc.pause:
                     self.store.set_setting("platform_paused:" + action.platform, True)

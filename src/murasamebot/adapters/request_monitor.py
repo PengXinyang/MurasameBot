@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from contextvars import ContextVar
 from email.utils import parsedate_to_datetime
 import re
 import logging
@@ -31,6 +32,14 @@ class RequestMonitor:
         self.store,self.settings,self.role=store,settings,role
         self.clock,self.sleep=clock,sleep
         self.essential=False
+        self._manual_read_paths=ContextVar("manual_read_paths",default=frozenset())
+
+    @contextmanager
+    def manual_reads(self, paths):
+        """Skip automation spacing for these explicit reads, preserving cooldowns."""
+        token=self._manual_read_paths.set(frozenset(paths))
+        try:yield
+        finally:self._manual_read_paths.reset(token)
 
     @contextmanager
     def essential_reads(self):
@@ -50,6 +59,7 @@ class RequestMonitor:
         if not self.allowed(channel):
             retry=max(self.clock()+1,self.store.request_cooldown(self.scope(channel)).get("until",0))
             raise PlatformError("读取暂缓：通道冷却或计划发送静默窗口",code="read_deferred",platform="bilibili",retry_at=retry)
+        if request.url.path in self._manual_read_paths.get():return
         slot=self.store.request_slot(self.clock(),self.settings.read_gap_seconds,self.settings.read_max_wait_seconds)
         if slot is None:
             raise PlatformError("读取暂缓：共享读取额度暂忙",code="read_deferred",platform="bilibili",retry_at=self.clock()+5)

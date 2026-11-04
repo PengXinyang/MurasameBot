@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 
 from murasamebot.domain.models import PublicationCheck, PolicyError
 
@@ -30,7 +31,14 @@ def classify_comment(reply: dict, *, pages: int = 0) -> PublicationCheck:
 
 
 class BilibiliPublicationMixin:
-    def check_publication(self, action, external_id: str) -> PublicationCheck:
+    def check_publication(self, action, external_id: str, *, manual: bool = False) -> PublicationCheck:
+        monitor = self.monitor
+        reads = (monitor.manual_reads(("/x/web-interface/nav", "/x/v2/reply/reply"))
+                 if manual and monitor is not None else nullcontext())
+        with reads:
+            return self._check_publication(action, external_id)
+
+    def _check_publication(self, action, external_id: str) -> PublicationCheck:
         # Local import avoids an adapter import cycle with the other mixins.
         from murasamebot.adapters.platforms.bilibili import COMMENT_TYPES, PlatformError, numeric
         if (not action.content or action.content.provider != "bilibili" or action.content.kind not in COMMENT_TYPES

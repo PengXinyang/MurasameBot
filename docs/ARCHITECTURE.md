@@ -1,5 +1,7 @@
 # 当前架构
 
+2026-11-04（D58）：人工publication/check和CLI comment-check显式传manual=true至PublicationService/PublicationProbe；B站适配器用RequestMonitor的ContextVar范围仅豁免本次nav/评论列表GET的自动间隔槽位。检查冷却在豁免之前，请求结果/退避照常持久化；默认调用、其他路径及并发线程继续共享自动GET节奏，无新增工作循环或schema变更。
+
 2026-11-04（D57）：MemoryService在既有预算/范围选择后给私人context增加内部_dialogue_sources来源名单；ChatCompletionsModel仅在private_chat将同账号/会话的实际用户和已受理agent档案展开为user/assistant正文投影，从末条JSON history去重。公开/跨平台回忆仍为资料，外部文本不能指定协议角色；不读额外数据库或建立第二套记忆/模型循环。聊天温度默认0.8，其他结构任务维持原值；Config兼容旧配置并装配两个新开关。原epoch失效链和JSON/审核保持。详见[丛雨风格实现](CONGYU_DIALOGUE_STYLE.md)。
 
 2026-11-02渠道审核补充：QQ模块声明private_policy.publication_review=false，Engine将普通私人文字/主动私聊/视频结果标为not_required并直接入共享outbox；SQLite审核领取/计数和全局draft转换接收装配层的私人免审核平台范围，发送端重新核对同一范围。非私人文字渠道保留原审核，所有身份/来源/最终策略保持；历史draft不自动释放。管理台platforms投影新增status参数，在限量前筛选、计数不随筛选缩小，QQ/B站浏览器各自保存筛选状态。见D55。

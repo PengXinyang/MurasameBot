@@ -73,7 +73,7 @@ class ActionSink(Protocol):
 
 
 class PublicationProbe(Protocol):
-    def check_publication(self, action: Action, external_id: str) -> PublicationCheck: ...
+    def check_publication(self, action: Action, external_id: str, *, manual: bool = False) -> PublicationCheck: ...
 
 
 class ArtworkSource(Protocol):
