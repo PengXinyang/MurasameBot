@@ -1,5 +1,11 @@
 # 验证记录
 
+## 2026-11-04：自然聊天方案来源与文档检查
+
+本轮只读检索官方多轮/采样/Thinking/JSON文档，借助GitHub工具重读社区README，记录文件blob及作者自述的证据边界；代码基准`2dd8287`。仅核对公共风格/示例，不复制私人关系原文到文档。未运行真实API、安装插件、改正式人设或请求参数；方案里的24次对照尚未执行，也没有新自然度/破甲成功率结论。
+
+六份修改文档的严格UTF-8、62个相对链接、代码围栏及git diff --check通过，范围检查确认业务/配置/角色无本轮差异；已有.env.example删除保留，不纳入提交。不重新跑业务测试或人设范围测试，历史61项网关/视觉结果仍属11-03任务。
+
 ## 2026-11-03：DeepSeek关闭思考请求验证
 
 D:/anaconda3/python.exe scripts/run_tests.py tests/test_model_gateway.py tests/test_vision.py执行61通过、0失败，5.72秒，报告.pytest-tmp/deepseek-thinking-targeted.xml。新增31项捕获实际HTTP序列化请求体，确认官方根/v1/beta/主机名大小写各类地址的私人/公开/群/学习/通话/审核/视觉请求均带thinking.type=disabled，JSON输出格式和消息角色保留；其他厂商、伪装后缀及本机兼容服务不发送字段。未运行全量，不将历史全套结果算作本次新结果。

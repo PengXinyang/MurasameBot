@@ -1,6 +1,6 @@
 # 项目记忆索引
 
-索引更新：2026-11-03。当前归并快照以[STATUS.md](STATUS.md)为准，历史日志和专题中的旧“未实现/未验收”需按后续记录判断。各专题的代码核对日期见其正文。这些文档帮助后续开发恢复上下文；机器人运行时的角色与用户记忆不从这里加载。
+索引更新：2026-11-04。当前归并快照以[STATUS.md](STATUS.md)为准，历史日志和专题中的旧“未实现/未验收”需按后续记录判断。各专题的代码核对日期见其正文。这些文档帮助后续开发恢复上下文；机器人运行时的角色与用户记忆不从这里加载。
 
 | 文件 | 用途 |
 | --- | --- |
@@ -15,7 +15,7 @@
 | [DASHBOARD_MODULES.md](DASHBOARD_MODULES.md) | QQ/B站平台管理页、任务归属、共同设置及QQ/B站共同记忆/日记/相处回顾 |
 | [SOCIAL_STATES.md](SOCIAL_STATES.md) | 带来源社交记录、短期角色状态、公开感受、跟进与管理 |
 | [PERSONA_PROMPT_RESEARCH.md](PERSONA_PROMPT_RESEARCH.md) | 去套话skill核验、LingChat提示词/历史链路、本轮普通聊天风格规则及后续对照验收 |
-| [DEEPSEEK_API_PROMPT_RESEARCH.md](DEEPSEEK_API_PROMPT_RESEARCH.md) | DeepSeek关闭思考、system/assistant提示词候选、Beta前缀补全及未复测边界 |
+| [DEEPSEEK_API_PROMPT_RESEARCH.md](DEEPSEEK_API_PROMPT_RESEARCH.md) | DeepSeek来源核验、自然口语/场景示例/采样/真实多轮方案及未实测边界 |
 | [VIDEO_VISION.md](VIDEO_VISION.md) | 视频快照配置、裁图/时间映射、视觉证据及降级边界 |
 | [VIDEO_UNDERSTANDING_PLAN.md](VIDEO_UNDERSTANDING_PLAN.md) | 视频理解规划（未开发）：分镜总览、高清细看、分析资产、上游分支对比、阶段与验收 |
 | [ROADMAP.md](ROADMAP.md) | 现有QQ/B站/Docker的验收顺序、可靠性与尚未开发范围 |
