@@ -21,6 +21,33 @@ def show(value):
     print(json.dumps(value, ensure_ascii=False, indent=2))
 
 
+def online_account_checks(runtime):
+    """Check every enabled platform without exposing raw transport errors."""
+    messages = {
+        "qq_unavailable": "QQ网关接口不可用；请确认NapCat已运行并登录，核对qq.api_url及HTTP服务Token。serve --with-worker不会启动NapCat。",
+        "qq_check_failed": "QQ网关只读检查未通过；请检查NapCat登录状态及HTTP服务配置。",
+        "qq_wrong_account": "QQ实际登录账号与qq.robot_id不一致；请核对NapCat登录账号和配置。",
+        "auth_expired": "平台尚未登录或登录已过期；请重新登录。",
+        "not_logged_in": "平台尚未登录；请先完成登录。",
+        "wrong_account": "实际登录账号与配置的机器人账号不一致；请核对账号和凭证。",
+        "read_limited": "平台读取受到限制；请等待读取冷却后再检查。",
+        "risk_control": "平台访问被限制；请检查账号验证及平台风险提示。",
+        "account_check_failed": "账号检查未完成；请检查平台连接、登录状态及接口配置。",
+    }
+    accounts, checks = {}, {}
+    for name, module in runtime.modules.items():
+        try:
+            accounts[name] = module.adapter.account()
+            checks[name] = {"ok": True}
+        except (PlatformError, httpx.HTTPError, OSError, ValueError) as exc:
+            code = getattr(exc, "code", "account_check_failed")
+            if code not in messages:
+                code = "account_check_failed"
+            accounts[name] = None
+            checks[name] = {"ok": False, "error_code": code, "message": messages[code]}
+    return accounts, checks
+
+
 def worker_loop(config_path: Path, stop: StopEvent, *, once=False, config_loader=Config):
     from murasamebot.bootstrap.worker_lock import WorkerLock
     with WorkerLock(Config(config_path)):
@@ -79,7 +106,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="MurasameBot：跨平台社交内核与 B 站首版")
     result.add_argument("--config", type=Path, default=Path(__file__).resolve().parents[3] / "config.yml")
     sub = result.add_subparsers(dest="command", required=True)
-    doctor = sub.add_parser("doctor", help="本地配置自检；--online 额外只读检查 B 站登录")
+    doctor = sub.add_parser("doctor", help="本地配置自检；--online 分别只读检查已启用平台的账号接口")
     doctor.add_argument("--online", action="store_true")
     sub.add_parser("demo", help="不联网的跨平台场景演示")
     run = sub.add_parser("run", help="启动工作循环")
@@ -217,11 +244,16 @@ def main(argv=None):
             if args.command == "doctor":
                 report = readiness(runtime)
                 if args.online:
-                    checks = {name: module.adapter.account() for name, module in runtime.modules.items()}
+                    accounts, checks = online_account_checks(runtime)
                     # Keep the original Bilibili-only doctor response shape.
-                    report["account_check"] = checks["bilibili"] if set(checks) == {"bilibili"} else checks
-                    report["note"] = "仅验证只读登录状态，未发布评论或验收其他接口"
+                    report["account_check"] = accounts["bilibili"] if set(accounts) == {"bilibili"} else accounts
+                    report["online_checks"] = checks
+                    report["online_ok"] = bool(checks) and all(check["ok"] for check in checks.values())
+                    report["note"] = ("仅检查平台账号接口，未检查托管接收器/worker、好友关系、模型或消息送达，未发送消息。"
+                                      if checks else "未启用平台，未执行在线账号检查。")
                 show(report)
+                if args.online and not report["online_ok"]:
+                    raise SystemExit(2)
             elif args.command == "comment-check":
                 from dataclasses import asdict
                 from murasamebot.application.publication import PublicationService
