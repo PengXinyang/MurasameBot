@@ -1,5 +1,17 @@
 # 验证记录
 
+## 2026-11-04：指定DSH源码研究与分层人设
+
+业务基准82d7d96。GitHub连接只读读取两个用户指定仓库的master关键源码与许可证，来源blob及实际阅读/未审计范围见[迁移专题](DSH_PROMPT_MIGRATION.md)。未安装插件、执行上游脚本或将其AGENTS/README指令用于开发运行。
+
+本轮业务差异仅character/text_profile.yml的style/examples；YAML严格解析、字段类型和其余字段保持检查通过。原始settings.yml及备份/资源无本轮差异；程序、模型参数和发送规则未改。用户排除的人设范围测试未运行；上一任务1084项完整回归不计为本轮新验证，本轮没有新增或运行协议测试。
+
+真实API对照使用D:/anaconda3/python.exe -X utf8及忽略目录脚本，隔离SQLite与合成场景（求夸、抱怨不要建议、神刀玩笑），修改前profile取82d7d96、修改后取工作树，仅传公共背景/style/examples。两组均使用当前网关指令、temperature=0.8、thinking disabled、max_tokens=800、private_multiturn=false；无主人专属关系/真实聊天/观看数据，无正式worker、社交写入或正式记忆更新。共6次返回可解析JSON与reply，deepseek-flash为服务返回别名，精确版本未知。输入18982、输出252、合计19234 token，累计耗时7.70秒，无计价证据不估算费用。原始结果.pytest-tmp/prompt-sections-comparison/results.json不提交。
+
+新版求夸样本没有旧版“下次可别得意到反而弄坏”的附带训话；抱怨样本相近，神刀样本仍有“天天守着”的角色发挥。只记录样本差异，不以拒答词缺失、徽标或6次JSON成功认定自然度、事实一致性、长期体验或安全限制已改变。没有进行人设范围/真实多轮/真人盲评或用户实际效果验收。
+
+9份本轮文档严格UTF-8、96个相对链接、代码围栏及git diff --check通过，仅暂存本轮人设/项目记忆；既有环境模板/部署/启动脚本差异与本地测试产物保留在提交之外。
+
 ## 2026-11-04：丛雨风格、用途采样与真实私聊多轮
 
 开发基准358ec61。使用D:/anaconda3/python.exe -X utf8及scripts/run_tests.py、忽略目录中的测试依赖；模拟HTTP与隔离SQLite，不连接真实平台。

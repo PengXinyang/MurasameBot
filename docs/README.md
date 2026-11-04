@@ -17,6 +17,7 @@
 | [PERSONA_PROMPT_RESEARCH.md](PERSONA_PROMPT_RESEARCH.md) | 去套话skill核验、LingChat提示词/历史链路、本轮普通聊天风格规则及后续对照验收 |
 | [CONGYU_DIALOGUE_STYLE.md](CONGYU_DIALOGUE_STYLE.md) | 丛雨台词来源、原创场景、分用途采样、当前私聊真实多轮及自然度验收边界 |
 | [DEEPSEEK_API_PROMPT_RESEARCH.md](DEEPSEEK_API_PROMPT_RESEARCH.md) | DeepSeek来源核验、自然口语/场景示例/采样/真实多轮方案及未实测边界 |
+| [DSH_PROMPT_MIGRATION.md](DSH_PROMPT_MIGRATION.md) | dsh-purge/无限二代源码核对、已迁移的人设写法与尚未实现的工程适配 |
 | [VIDEO_VISION.md](VIDEO_VISION.md) | 视频快照配置、裁图/时间映射、视觉证据及降级边界 |
 | [VIDEO_UNDERSTANDING_PLAN.md](VIDEO_UNDERSTANDING_PLAN.md) | 视频理解规划（未开发）：分镜总览、高清细看、分析资产、上游分支对比、阶段与验收 |
 | [ROADMAP.md](ROADMAP.md) | 现有QQ/B站/Docker的验收顺序、可靠性与尚未开发范围 |

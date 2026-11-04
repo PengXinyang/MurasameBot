@@ -1,5 +1,15 @@
 # 开发日志与当前状态
 
+## 2026-11-04：读取指定DSH项目并调整人设写法
+
+范围：以82d7d96核对现有D57请求/私聊历史链和D58更新，读取用户给定HunYiSage/dsh-purge及xuanmingguo/dsh-infinite-gen-2的README、关键入口/提示词/状态、装配/补丁/规则/重试相关源码与许可说明。purge为1.1.90，包含本机Harness补丁和提示词重写；无限二代为0.2.3，全局追加提示词和关键词状态投影。fork内安装链接仍指别处上游，purge的rc兼容声明也存在差异，未据其说明执行安装。未逐行审计全部桌面/红队代码，也未解密验证purge内置槽，来源blob与阅读范围写入DSH_PROMPT_MIGRATION。
+
+用户随后明确要求学习写法并修改人设，故本轮只修改character/text_profile.yml的style/examples：style改为保留换行的职责分段，日常情景区分求夸、抱怨、玩笑、认真回答、纠错和不确定，末尾用短句收束；示例8组增至10组，均为原创合成内容。style从598变956个Python字符。公共背景、来源校验、owner_style/private_owner_context、原settings.yml/备份与程序代码保持；没有引入无条件服从、禁用拒答词、执行承诺、宿主审批/沙箱补丁、自动继续或第二次润色。提示词构造器/版本切换/状态观测仅作为后续原生适配建议，没有声称已编码。
+
+验证：YAML解析/字段类型、非目标字段保持及差异检查通过；未运行用户排除的人设范围测试，不为低影响配置修改新增镜像式单测或重跑全套。真实API对照为3个合成日常场景×修改前后公共profile，共6次，固定同一网关指令/temperature=0.8/thinking disabled/max_tokens=800/private_multiturn=false；全部返回可解析JSON及reply。服务只返回deepseek-flash别名，无可确认精确权重版本；输入18982、输出252、总19234 token，六次累计7.70秒，不估算费用。求夸样本新版少了附带训话，抱怨差异较小，神刀样本仍有习惯性发挥；样本小且无盲评，不能称自然度稳定改善。隔离结果保留.pytest-tmp/prompt-sections-comparison/results.json，不提交。
+
+未验证/下一步：未使用私人关系/真实聊天/观看记录测试，未调用社交写入、启动/重启正式worker或容器；实际主人私聊及多轮自然度待用户体验，不能把本轮结果外推为两个插件的破甲成功率。运行实例需重新加载实际profile，既有Docker卷只同步style/examples并保留私有字段。架构/程序决策没有新增变更，D57补记、源码专题、操作、状态/索引与验证同步；维护公平性、备份及原实号待办保持。仅提交本轮人设/文档清单，保留并发环境模板/Docker/compose/run.py等差异，按用户授权通过7890代理推送。
+
 ## 2026-11-04：人工评论state核查直接读取（D58）
 
 用户明确限定排队等待用于自动流程，按钮查state直接调用。Web publication/check及显式CLI comment-check向PublicationService/PublicationProbe传manual=true；B站核查适配器仅为本次nav与目标评论列表GET建立manual_reads范围，RequestMonitor先验证冷却，再跳过request_slot。人工查询不等待、也不预占或推迟自动槽位；结果仍进入原脱敏诊断和-509/429退避。ContextVar按monitor/执行上下文隔离，异常退出恢复；默认false、其他路径及其他线程仍按自动节奏，未新增发送/模型循环。实时登录、内容/作者/目标、分页上限、同动作租约和原回执不变，没有扩展人工重发权限。

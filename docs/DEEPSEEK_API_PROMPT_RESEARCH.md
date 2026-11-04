@@ -1,5 +1,7 @@
 # DeepSeek API提示词与“破甲”调研
 
+2026-11-04指定项目补充：已读取HunYiSage/dsh-purge与用户给出的xuanmingguo/dsh-infinite-gen-2 fork的关键源码，区分宿主补丁、提示词装配和词表状态徽标。按用户后续指令仅将分层/场景选择/短锚点写法用于派生profile，新增6次固定0.8的真实API初步对照；没有安装插件或改变请求/权限链路。来源blob、迁移点和未实现范围见[专题](DSH_PROMPT_MIGRATION.md)。
+
 ## 2026-11-04：自然对话方案已编码
 
 在358ec61基础上落实派生profile语气与八组原创场景、分用途chat_temperature（默认0.8）和同一私聊真实档案多轮（private_multiturn默认true）。来源、具体范围、验证和生效方式见[丛雨风格实现](CONGYU_DIALOGUE_STYLE.md)。另执行3个合成场景×旧/新公共profile的6次真实API初步对照，固定temperature=0.5、不展开历史；全部可解析，但不构成自然度验收或温度/多轮效果证明。没有移植安全规避插件或伪造模型轨迹，不能声称破甲成功。下文“尚未开发/未修改”均保留为各次调研时的历史状态；原24次分阶段方案未按原设计执行。
