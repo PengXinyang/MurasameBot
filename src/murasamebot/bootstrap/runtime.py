@@ -188,7 +188,7 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                                      max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency)
         persona = load_persona(config.file("character_source"), config.file("character_profile"))
         if persona.source_changed:
-            LOG.warning("源人设已变化：请复核 character/text_profile.yml，现有记忆与任务保留")
+            LOG.info("角色源文件与文字人设记录的来源校验值不同；已加载当前文字人设，人设可正常调整，现有记忆、绑定与任务保留")
         v = config.data.get("vision", {})
         vision_settings = VisionSettings(**{key: v[key] for key in VisionSettings.__dataclass_fields__ if key in v})
         reader = HTTPImageReader(hosts=tuple(v.get("allowed_image_hosts", ["i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com", "bimp.hdslb.com"])), proxy_url=config.network_proxy)

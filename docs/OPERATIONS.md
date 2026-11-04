@@ -52,6 +52,14 @@ MURASAME_OWNER_UID=your-bilibili-uid
 
 绑定中的`person_id`是内部统一身份，`platform/external_id`为已核验的平台账户，`display_name`是显示名而非权限依据，`purpose`表示路由用途。主人换账号需同步检查绑定版本及旧任务。不要把真实UID写进公开示例。
 
+## 调整人设
+
+可以直接编辑配置项`character_profile`所指的文字人设（默认`character/text_profile.yml`），调整背景、说话风格、主人专属设定和示例。人设版本与agent身份分开，编辑或重新加载人设不会清空记忆、身份绑定、委托或待办任务。重启进程可确保后续生成加载新内容，已生成的待发文字不会因此自动改写。
+
+`character_source`（默认`character/settings.yml`）是原始LingChat来源；运行时读取其角色名，但不会把其中的原始提示词自动覆盖到文字人设。修改来源中的设定后，如需体现在聊天中，应同步调整文字人设。`source_sha256`仅用于记录提炼时的来源校验值；不一致只输出INFO说明，表示继续使用当前文字人设，不是错误或发送阻塞，也不表示人设禁止修改。旧版本的“源人设已变化：请复核”WARNING也是这项来源一致性提示。
+
+Docker的运行人设保存在工作区卷中；修改宿主机种子或重建镜像不会覆盖卷内已有文件。应调整实际运行工作区的人设，再重新加载。部署边界见[Docker部署](DOCKER.md)。
+
 ## 两个独立登录
 
 平台开关使用`platforms.<name>.enabled`，旧配置默认启用B站；QQ已具备主人私聊连接器和独立签名上报。管理台ReceiverManager可分别启停平台服务，QQ-only不会自动启动B站；禁用平台不参与新任务领取和发送，待处理数据保留。管理台外的CLI部署方式、登录凭证/连接参数变更与生命周期边界见[平台服务](PLATFORM_SERVICES.md)和[平台模块](PLATFORM_MODULES.md)。下列两个登录仅指B站AI社交账号与主人历史账号，QQ的NapCat登录见[QQ私聊](QQ_PRIVATE_CHAT.md)。
