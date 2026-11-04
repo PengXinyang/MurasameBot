@@ -103,6 +103,46 @@ def test_only_confirmed_outgoing_enters_archive(memory, now):
     assert store.memory_status()["conversation_records"]==2
 
 
+def test_private_protocol_turns_use_only_packed_current_channel_live_records(memory, now):
+    store, _, service = memory
+    service.settings = replace(service.settings, recent_messages=20)
+    store.bind("owner", "qq", "peer")
+    store.bind("owner", "bilibili", "peer")
+    service.shared_owner_private = True
+    event = archive(store, now, platform="qq", text="这轮私聊的问题")[0]
+    other_account = replace(event, event_id="other-bot", account_id="another-bot", text="另一机器人账号的旧记录", occurred_at=now+1)
+    store.enqueue_event(other_account)
+    store.finish_event(other_account.event_id, "done")
+    archive(store, now+2, platform="bilibili", text="另一绑定平台的私人回忆")
+    action = Action("public-post", "agent", "qq", "robot", None, "已发表的公开文字", now+3, now+100,
+        kind="autonomous_post", visibility="public", not_before=now+3, autonomy_version="fixture")
+    assert store.enqueue_action(action, draft=False, now=now+3)
+    with store.connection() as db:
+        db.execute("UPDATE actions SET state='sending' WHERE action_id=?", (action.action_id,))
+    store.finish_action(action.action_id, Receipt("accepted", "public-receipt"), now+3)
+    for state in ("draft", "failed", "unknown", "accepted"):
+        reply = Action(state, "agent", "qq", "robot", None, "回复状态："+state, now+4, now+100,
+            event_id=event.event_id, conversation_id="room", visibility="private")
+        assert store.enqueue_action(reply, draft=True, now=now+4)
+        if state != "draft":
+            with store.connection() as db:
+                db.execute("UPDATE actions SET state='sending' WHERE action_id=?", (reply.action_id,))
+            store.finish_action(state, Receipt(state, "receipt"), now+4)
+    current = replace(event, event_id="current", text="接着说吧", occurred_at=now+10)
+    context = service.context(current, "owner", True, now+10)
+    sources = set(context["_dialogue_sources"])
+    turns = [r for r in context["history"] if r["source"] in sources]
+    assert [(r["speaker"], r["text"]) for r in turns] == [("user", event.text), ("agent", "回复状态：accepted")]
+    references = [r["text"] for r in context["history"] if r["source"] not in sources]
+    assert "另一绑定平台的私人回忆" in references and "已发表的公开文字" in references
+    assert "另一机器人账号的旧记录" in references
+    assert not any(state in str(turns) for state in ("draft", "failed", "unknown"))
+    store.forget_source(event.event_id)
+    refreshed = service.context(current, "owner", True, now+11)
+    assert not refreshed["_dialogue_sources"] and refreshed["memory_epoch"] > context["memory_epoch"]
+    assert "_dialogue_sources" not in service.context(replace(current, visibility="public"), "owner", True, now+11)
+
+
 def test_incremental_summary_keeps_recent_messages_and_is_idempotent(memory, now):
     store,model,service = memory
     archive(store,now,count=5)

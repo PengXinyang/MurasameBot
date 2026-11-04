@@ -58,6 +58,31 @@ def write_config(tmp_path):
     return path
 
 
+@pytest.mark.parametrize("temperature", [True, -0.1, 2.1, float("nan"), float("inf"), "0.8"])
+def test_invalid_chat_temperature_is_rejected(tmp_path, temperature):
+    config = Config(write_config(tmp_path))
+    config.raw["model"]["chat_temperature"] = temperature
+    with pytest.raises(ValueError, match="chat_temperature"):
+        Config.validate(config.raw)
+
+
+def test_dialogue_defaults_and_local_override_are_validated_and_preserved(tmp_path):
+    path = write_config(tmp_path)
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["model"].pop("chat_temperature")
+    data["model"].pop("private_multiturn")
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    config = Config(path)
+    assert config.data["model"]["chat_temperature"] == 0.8
+    assert config.data["model"]["private_multiturn"] is True
+    config.save_local({"model": {"chat_temperature": 0.5, "private_multiturn": False}})
+    loaded = Config(path)
+    assert loaded.data["model"]["chat_temperature"] == 0.5
+    assert loaded.data["model"]["private_multiturn"] is False
+    with pytest.raises(ValueError, match="private_multiturn"):
+        loaded.save_local({"model": {"private_multiturn": "false"}})
+
+
 def test_revoked_binding_is_not_resurrected_on_restart(tmp_path):
     path = write_config(tmp_path)
     store = prepare_store(Config(path))

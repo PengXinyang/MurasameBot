@@ -165,6 +165,39 @@ def test_private_daily_chat_uses_history_without_creating_video_task(factory, no
     assert len(store.inspect("actions")) == 2  # Multiple replies in one conversation are allowed.
 
 
+def test_multiturn_response_is_discarded_when_archive_is_forgotten_during_generation(factory, now):
+    from murasamebot.adapters.models.chat_completions import ChatCompletionsModel
+
+    engine, store, _, _, _ = chat_engine(factory, review_strategy="inline")
+    first = private_event(now)
+    engine.ingest(first)
+    assert engine.process_one_event(now) and engine.dispatch_one(now)
+    second = replace(first, event_id="private-next", text="接着聊吧", occurred_at=now+2, reply_to="next", sequence=2)
+    # Avoid an unrelated intent request: test the real private generation request.
+    store.set_setting("private_intent:"+second.event_id, {"kind": "none"})
+    captured = []
+    def handle(request):
+        body = json.loads(request.content)
+        captured.append(body)
+        assert [m["role"] for m in body["messages"]] == ["system", "user", "assistant", "user"]
+        store.forget_source(first.event_id)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({
+            "decision": "reply", "text": "这是过期上下文生成的回复。", "can_send": True, "review_reason": "合成判断"})}}]})
+    gateway = ChatCompletionsModel(base_url="https://api.deepseek.com", name="fake-model", api_key="",
+        store=store, timezone="Asia/Singapore", daily_limit=20,
+        client=httpx.Client(transport=httpx.MockTransport(handle)))
+    engine.model = gateway
+    try:
+        engine.ingest(second)
+        assert engine.process_one_event(now+2)
+    finally:
+        gateway.close()
+    assert len(captured) == 1
+    assert len(store.inspect("actions")) == 1  # Only the previously accepted reply.
+    assert store.inspect("actions")[0]["state"] == "accepted"
+    assert any("记忆" in row["detail"] for row in store.inspect("audit") if row["kind"] == "event_error")
+
+
 def test_mutual_nonowner_cannot_access_owner_memories_or_create_owner_request(factory, now):
     engine, store, model, platform, access = chat_engine(factory)
     store.add_memory("owner", "person", "owner_private", "主人的私人情况", "owner-memory", now)

@@ -65,6 +65,8 @@ model:
   daily_call_limit: 150
   max_context_characters: 18000
   max_output_tokens: null  # omit max_tokens; use the model service's official default
+  chat_temperature: 0.8  # conversational operations only; quality awaits dialogue comparison
+  private_multiturn: true  # current private channel's archived user/accepted agent text
 processing:
   model_concurrency: 4  # shared by concurrent reply generation, reviews and vision
 memory:

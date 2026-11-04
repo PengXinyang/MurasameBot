@@ -123,7 +123,16 @@ class MemoryService:
                    "omitted_entries":len(history)+len(memories)-len(recent)-len(selected),"characters":used+cost,
                    "budget_characters":self.settings.context_characters,"budget_unit":"characters_not_tokens","created_at":now}
         self.store.set_setting("memory_context:"+stable_id(person,scope),metrics)
-        return {"history":list(reversed(recent)),"memories":selected,"memory_epoch":epoch}
+        context = {"history":list(reversed(recent)),"memories":selected,"memory_epoch":epoch}
+        if event.visibility == "private":
+            # Only packed, live records from this exact private channel can become
+            # protocol turns. Linked-platform memories/public posts stay references.
+            current_sources = {r["record_id"] for r in history
+                if r["platform"] == event.platform and r["account_id"] == event.account_id
+                and r["conversation_id"] == event.conversation_id and r["visibility"] == "private"
+                and r["purpose"] == "private_dialogue" and r["role"] in {"user", "agent"}}
+            context["_dialogue_sources"] = [r["source"] for r in context["history"] if r["source"] in current_sources]
+        return context
 
     @staticmethod
     def _score(text,query):

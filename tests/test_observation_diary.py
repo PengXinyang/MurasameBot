@@ -19,6 +19,17 @@ from test_architecture_and_config import write_config
 from test_owner_history import record, setup
 
 
+@pytest.fixture(autouse=True)
+def store_clock_matches_synthetic_observation_dates(monkeypatch, now):
+    # Reopening a store prunes expired observations. Use the fixture's clock,
+    # rather than expiring October's synthetic records as calendar time advances.
+    # Patch only the two pruning modules; HTTP/pytest/system clocks stay real.
+    import murasamebot.adapters.persistence.sqlite as persistence
+    import murasamebot.bootstrap.platforms.bilibili as platform_state
+    monkeypatch.setattr(persistence, "time", SimpleNamespace(time=lambda: now))
+    monkeypatch.setattr(platform_state, "time", SimpleNamespace(time=lambda: now))
+
+
 class DiaryModel:
     def __init__(self):
         self.calls=[]

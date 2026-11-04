@@ -1,5 +1,7 @@
 # 配置、运行与排障
 
+2026-11-04（D57）：新增model.chat_temperature（默认0.8，范围0至2，仅聊天类操作）及model.private_multiturn（默认true，仅当前私聊真实档案多轮）。可在config.local.yml的model段覆盖，旧配置自动补默认；没有新增管理台控件。需重建模型实例/重启实际进程加载参数，旧Docker镜像需重建。默认profile已调整为直率口语和原创场景；既有卷中实际profile须单独同步公共风格/examples并保留私密字段，种子不会覆盖它。已存草稿不改写，未启动正式平台服务；6次真实API合成场景初步对照不等于用户实际体验验收。来源、对照计划见[丛雨风格](CONGYU_DIALOGUE_STYLE.md)。
+
 2026-11-03：共享网关对api.deepseek.com精确主机名自动发送thinking.type=disabled，包含/v1及/beta入口。无需修改本地配置；重启进程或重建Docker镜像加载新代码。其他厂商/自建代理接口不会收到这个厂商字段。此项不修改QQ免审核或公开审核策略，也不等于关闭平台安全限制。
 
 

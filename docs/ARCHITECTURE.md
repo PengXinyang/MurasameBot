@@ -1,5 +1,7 @@
 # 当前架构
 
+2026-11-04（D57）：MemoryService在既有预算/范围选择后给私人context增加内部_dialogue_sources来源名单；ChatCompletionsModel仅在private_chat将同账号/会话的实际用户和已受理agent档案展开为user/assistant正文投影，从末条JSON history去重。公开/跨平台回忆仍为资料，外部文本不能指定协议角色；不读额外数据库或建立第二套记忆/模型循环。聊天温度默认0.8，其他结构任务维持原值；Config兼容旧配置并装配两个新开关。原epoch失效链和JSON/审核保持。详见[丛雨风格实现](CONGYU_DIALOGUE_STYLE.md)。
+
 2026-11-02渠道审核补充：QQ模块声明private_policy.publication_review=false，Engine将普通私人文字/主动私聊/视频结果标为not_required并直接入共享outbox；SQLite审核领取/计数和全局draft转换接收装配层的私人免审核平台范围，发送端重新核对同一范围。非私人文字渠道保留原审核，所有身份/来源/最终策略保持；历史draft不自动释放。管理台platforms投影新增status参数，在限量前筛选、计数不随筛选缩小，QQ/B站浏览器各自保存筛选状态。见D55。
 
 2026-11-02盘点：当前QQ主人私聊/视频委托、自主私聊/空间文字、群聊/学习、Windows通话媒体桥及Docker均已有实现；QQ隔离实号与Docker真实构建/启动证据见[STATUS.md](STATUS.md)。下文分日期补充保留实施历史，旧“QQ未接入/网关未安装/没有Docker”不再代表当前状态；真实送达/通话/长期运行仍需分别验收。

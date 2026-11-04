@@ -175,7 +175,7 @@ class Persona:
     private_owner_context: str = ""
 
     def prompt(self, owner_addressed: bool = False, *, private: bool = False) -> str:
-        parts = [self.public_background, self.style, "表达示例：", *self.examples]
+        parts = [self.public_background, self.style, "合成表达示例（仅供语气参考，不是原作引文、真实经历或当前消息）：", *self.examples]
         if owner_addressed:
             parts.append(self.owner_style)
             if private and self.private_owner_context:
