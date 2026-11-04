@@ -1,5 +1,15 @@
 # 开发日志与当前状态
 
+## 2026-11-04：将参考方案整理为社交对话链路改造计划（未实施）
+
+用户提供分层提示词、场景/摘要、多模型及错误处理建议，随后明确项目仍为社交机器人。以55ef1cb核对模型网关、ModelGateway/ModelError、Engine、事件重试、记忆/社交状态、Runtime和WorkerCoordinator，整理SOCIAL_CHAT_MODEL_PLAN并更新索引、STATUS和前一迁移专题。将场景转换为真实会话快照，将剧情摘要转换为现有来源记忆，角色主动性沿用Autonomy/协调器/outbox；不新建RoleplayEngine、小说/剧情系统或另一套人物关系库，不改台词输出方式。
+
+关键发现：现有接口/文字人设、摘要和私聊多轮、0.8用途温度及官方thinking disabled均已具备。标准WorkerCoordinator每任务重新创建Runtime并加载profile，缺的是原子保存、最后有效版本和生效反馈，不能把所有运行方式一律称为无热加载。网关部分错误已有诊断，但ModelError无类别，Engine统一进入有限次数/固定60秒事件重试；官方列出的aborted和insufficient_system_resource没有单独拒绝路径。
+
+验证：官方API/Thinking页面只读核对；用httpx.MockTransport和内存假仓储核对5种模拟响应。aborted/insufficient_system_resource附完整reply JSON均被当前网关返回reply；content_filter抛unexpected_finish，length抛output_truncated，stop纯空格抛empty_content。仅证实网关分支，没有平台写入、真实模型请求或送达结论，也没有修复该缺口。未跑用户排除的人设范围、完整回归或真实体验，不将先前6次API对照计作本轮证据。
+
+方案优先级为类型化错误/中断处理与重试分类→可信提示词构造及有界ConversationContext→人设版本保存/回退与生效反馈→模型诊断展示→有实际需求后扩展命名模型配置/能力声明。保持JSON、按渠道审核（QQ私人文字仍免审）、来源/绑定/epoch、预算/间隔及unknown保护；生成失败不伪装成发送失败或空草稿。本文没有改变既有架构/行为决策，新增实现均标未实施；维护公平性、备份与原实号待办继续保留。本轮只提交方案/项目记忆，保留既有环境模板、Docker/compose/run.py差异，按7890代理自动推送。
+
 ## 2026-11-04：读取指定DSH项目并调整人设写法
 
 范围：以82d7d96核对现有D57请求/私聊历史链和D58更新，读取用户给定HunYiSage/dsh-purge及xuanmingguo/dsh-infinite-gen-2的README、关键入口/提示词/状态、装配/补丁/规则/重试相关源码与许可说明。purge为1.1.90，包含本机Harness补丁和提示词重写；无限二代为0.2.3，全局追加提示词和关键词状态投影。fork内安装链接仍指别处上游，purge的rc兼容声明也存在差异，未据其说明执行安装。未逐行审计全部桌面/红队代码，也未解密验证purge内置槽，来源blob与阅读范围写入DSH_PROMPT_MIGRATION。

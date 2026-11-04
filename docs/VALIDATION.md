@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-11-04：社交机器人改造方案现状与模拟分支核对
+
+业务基准55ef1cb。本轮只修改SOCIAL_CHAT_MODEL_PLAN及索引/状态/开发与验证记忆/前一专题，不改人设、业务、正式配置或数据。只读核对DeepSeek官方Chat Completions/Thinking文档，确认当前结束原因还包括aborted与insufficient_system_resource，且JSON模式下stop可能只有空格；没有重新核验或复述未查证的服务条款细节。
+
+使用D:/anaconda3/python.exe -X utf8运行内联隔离探针，httpx.MockTransport拦截所有模型HTTP，假仓储只在内存保存调用计数及诊断。共5种输入：aborted+完整reply JSON、insufficient_system_resource+完整reply JSON、content_filter、length+半截JSON、stop+空格；结果依次为返回reply、返回reply、ModelError/unexpected_finish、ModelError/output_truncated、ModelError/empty_content。前两项是待修复的网关反例，不是模拟通过或已修复的证明；未创建/发送真实平台动作。
+
+未调用真实模型或平台、未跑全量或人设范围测试，也没有新的自然度/热加载实机验收。标准worker下一任务读profile的结论来自workers.py::job与runtime.py的静态调用链，不能据此证明当前正式进程已加载某版本。方案将所有新功能标未实施，保持既有维护/备份待办。本轮6份文档严格UTF-8、65个相对链接、代码围栏及git diff --check通过，范围检查确认src/character/tests/config.yml无本轮差异，已有部署改动保留。
+
 ## 2026-11-04：指定DSH源码研究与分层人设
 
 业务基准82d7d96。GitHub连接只读读取两个用户指定仓库的master关键源码与许可证，来源blob及实际阅读/未审计范围见[迁移专题](DSH_PROMPT_MIGRATION.md)。未安装插件、执行上游脚本或将其AGENTS/README指令用于开发运行。
