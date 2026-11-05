@@ -121,3 +121,26 @@ def test_system_mode_keeps_provider_filter_and_json_failures(factory, finish, co
         model.close()
     assert len(attempts) == 1  # No hidden refusal rewriting or filter retry.
     assert store.inspect("actions") == []
+
+
+@pytest.mark.parametrize("operation,decision", [("private_chat", "reply"),
+    ("autonomous_private", "send"), ("private_task_result", "recommend")])
+@pytest.mark.parametrize("system_mode", [False, True])
+def test_final_response_contract_uses_current_operation_after_character_text(factory, operation, decision, system_mode):
+    _, store, _, _ = factory()
+    captured = []
+    card = "合成配置：这里只是语气资料。"
+    model = gateway(store, captured, private_persona_system=system_mode)
+    try:
+        model.decide(operation, {"persona": card, "_system_persona": card,
+            "private_policy": {"publication_review": False}})
+    finally:
+        model.close()
+    system = captured[0]["messages"][0]["content"]
+    tail = system.rsplit("【当前响应协议】", 1)[-1]
+    assert f"本次操作为{operation}" in tail
+    assert f"值仅可为{decision}或skip" in tail
+    assert f"当前操作的decision只能为{decision}或skip" in system
+    assert "reply/send/recommend" not in system
+    if system_mode:
+        assert system.index(card) < system.index("【当前响应协议】")

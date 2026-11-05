@@ -1,5 +1,13 @@
 # 已确认的重要决策
 
+## D60：私人响应协议按操作限定，免审核回复仅兼容缺失决策字段（2026-11-05）
+
+QQ来信只读排障发现接收/合并正常，近期两个事件均以“私信回复决策类型无效”重试三次后失败，未创建回复动作；主动私聊使用另一操作。历史模型响应未存储，无法确定当时具体无效值。合成场景真实API在强化提示词后仍复现有正文但完全缺少decision，故不能只靠提示词修复。
+
+网关将private_chat/autonomous_private/private_task_result分别限定为reply/send/recommend或skip，并在system最后追加本次响应协议，避免跨操作枚举混用。应用仅对模块明确publication_review=false的private_chat，在decision键完全缺失且有非空文字或合法分条候选时补reply；正文保持原样，后续正文/表情/长度/来源/绑定/记忆/发送检查照常执行。显式skip/null/send/其他值不转换，需审核渠道保持原拒绝行为；不增加模型请求、审核授权或发送循环。
+
+新增private_decision_invalid及private_decision_recovered诊断，只记录操作、固定枚举分类、字段类型/存在性，不写任意返回值或正文。未采用强制所有请求回答、将send/recommend等一律映射为reply、靠不断重试纠正协议、重放旧失败消息或绕过最终门禁的方案。本条细化D55免审核私人回复的协议兼容，不扩大D59人设权限，不处理既有aborted/insufficient_system_resource缺口，无schema迁移。
+
 ## D59：私人文字生成使用程序选定的system人设（2026-11-04）
 
 用户要求把请求级提示词注入接入项目以减少拒答。本轮落实的是应用选定的人设进入system，不承诺DeepSeek官方API永不拒答，不移植宿主补丁、无条件服从模板或拒答循环改写。新增model.private_persona_system，默认true，可设false回退。

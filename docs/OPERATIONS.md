@@ -1,5 +1,7 @@
 # 配置、运行与排障
 
+2026-11-05（D60）：QQ主动能发但来信不回复时，先按接收器→chat_inbox合并→events→actions排查；本次实号只读定位在生成决策校验，错误为“私信回复决策类型无效”，不是没有收到消息，也没有生成待审核草稿。新版增加private_decision_invalid/private_decision_recovered的脱敏字段诊断，并在system末尾按操作限制决策；仅免审核私人回复允许有正文但缺decision字段的兼容。显式无效决策仍失败。需要重启实际Python进程加载代码，旧失败/unknown/草稿不自动重放。重载须保留各平台风控暂停，不用会清除所有平台暂停的resume作为一般重启步骤；停止前确认没有生成、审核或发送中的工作。
+
 2026-11-04（D59）：新增model.private_persona_system，旧配置默认补true，私人文字回复/主动私聊/视频结果把程序已选人设放进system；并不关闭服务端过滤。需要回退时在config.local.yml的model段设private_persona_system: false，验证仅接受布尔值，没有新增管理台控件。装配新代码需重启实际Python进程或重建旧Docker镜像；本轮未操作正式进程。最新仓库profile修复了一行正文缩进，保留原字句，既有卷应只同步对应缩进，避免覆盖用户新增内容。已存草稿不重写，结果未知不重放。
 
 2026-11-04私人提示词追加：当前仓库profile的private_owner_context末尾新增用户指定的五句私人助手提示词，其他字段保持。标准worker新任务创建Runtime时读取实际profile，正在生成的任务仍使用其已加载快照；长持有的人设实例需重新加载。Docker既有卷需仅追加这段内容并保留原私有字段，不用整份覆盖。此项没有重启正式服务或同步既有卷，不改历史草稿。

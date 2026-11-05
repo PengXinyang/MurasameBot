@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime
 import re
+import json
 import time
 from zoneinfo import ZoneInfo
 
@@ -366,11 +367,31 @@ class SocialEngine:
             "explicit_video_requests_enabled": bool(event.platform in self.private_policies and self.request_route and self.providers),
             "max_characters": self.settings.max_private_characters,
         }, event.platform, event.account_id, "private", now)
+        if "decision" not in result and self.private_policies.get(event.platform, {}).get("publication_review") is False:
+            # QQ private publication is authorized by program policy. Recover only
+            # an omitted protocol field beside real generated speech, never an
+            # explicit skip/null/other choice. Existing body/final gates still run.
+            body = result.get("text")
+            parts = result.get("messages")
+            has_body = isinstance(body, str) and bool(body.strip())
+            has_parts = (event.reply_limit > 1 and isinstance(parts, list) and 1 <= len(parts) <= event.reply_limit
+                and all(isinstance(part, str) and part.strip() for part in parts))
+            if has_body or has_parts:
+                result = {**result, "decision": "reply"}
+                self.store.audit("private_decision_recovered", json.dumps({"operation": "private_chat",
+                    "reason": "missing_decision_with_speech", "has_text": has_body, "has_messages": has_parts}), now)
         if result.get("decision") == "skip":
             self.social.capture(result,event=event,person=person,context=context,social_context=social,now=now)
             self.store.audit("private_skipped", f"{event.event_id}: 本条无需回复", now)
             return
         if result.get("decision") != "reply":
+            decision = result.get("decision")
+            known = {"reply", "skip", "send", "recommend", "comment", "answer", "respond", "chat", "none"}
+            label = decision if isinstance(decision, str) and decision in known else "missing" if decision is None else "other"
+            self.store.audit("private_decision_invalid", json.dumps({"operation": "private_chat",
+                "decision_kind": label, "decision_type": type(decision).__name__,
+                "has_text": isinstance(result.get("text"), str) and bool(result["text"].strip()),
+                "has_messages": isinstance(result.get("messages"), list)}, ensure_ascii=False), now)
             raise PolicyError("私信回复决策类型无效")
         parts = result.get("messages") if event.reply_limit > 1 else None
         if parts is not None:

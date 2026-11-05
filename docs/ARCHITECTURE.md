@@ -1,5 +1,7 @@
 # 当前架构
 
+2026-11-05（D60）：网关在system末尾按本次私人操作限定decision。SocialEngine仅对模块声明免发布审核的private_chat兼容“有正文但decision键缺失”，保留显式决策与既有正文/来源/发送门禁；新增脱敏形状诊断。不增加模型请求、发送循环或schema，实际QQ排障与验证见QQ_PRIVATE_CHAT及VALIDATION。
+
 2026-11-04（D59）：Engine为现有三类私人文字生成附加内部_system_persona，ChatCompletionsModel按private_persona_system将已选配置放入system并从user JSON去重。信封在序列化前移除，外部资料仍保持数据角色；预算、模型限流/额度、原JSON/审核/outbox和epoch复验保持。无新循环或schema；其他操作与回退模式仍用原上下文。详见[操作说明](OPERATIONS.md)和D59。
 
 2026-11-04（D58）：人工publication/check和CLI comment-check显式传manual=true至PublicationService/PublicationProbe；B站适配器用RequestMonitor的ContextVar范围仅豁免本次nav/评论列表GET的自动间隔槽位。检查冷却在豁免之前，请求结果/退避照常持久化；默认调用、其他路径及并发线程继续共享自动GET节奏，无新增工作循环或schema变更。

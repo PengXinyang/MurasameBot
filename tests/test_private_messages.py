@@ -199,6 +199,72 @@ def test_multiturn_response_is_discarded_when_archive_is_forgotten_during_genera
     assert any("记忆" in row["detail"] for row in store.inspect("audit") if row["kind"] == "event_error")
 
 
+@pytest.mark.parametrize("decision,expected", [(None, "missing"), ("send", "send"),
+    ("recommend", "recommend"), ("reply|skip", "other"), (["reply"], "other"),
+    ("private-sensitive-value", "other")])
+def test_invalid_private_decision_records_only_safe_shape_and_never_queues(factory, now, decision, expected):
+    engine, store, model, _, _ = chat_engine(factory)
+    event = private_event(now)
+    store.set_setting("private_intent:"+event.event_id, {"kind": "none"})
+    model.decide = lambda op, payload: {"decision": decision, "text": "这段合成正文不应进入诊断。"}
+    engine.ingest(event)
+    assert engine.process_one_event(now)
+    assert not store.inspect("actions")
+    record = next(r for r in store.inspect("audit") if r["kind"] == "private_decision_invalid")
+    meta = json.loads(record["detail"])
+    assert meta["decision_kind"] == expected and meta["has_text"] is True
+    assert "private-sensitive-value" not in record["detail"] and "合成正文" not in record["detail"]
+    assert store.inspect("events")[0]["state"] == "pending"
+
+
+@pytest.mark.parametrize("response", [{"text": "这是一条完整的合成回复。"},
+    {"messages": ["这是一条合成回复。", "这是第二条。"]},
+    {"text": "这是一条完整的合成回复。", "can_send": False}])
+def test_no_review_private_channel_recovers_omitted_decision_without_rewriting_text(factory, now, response):
+    engine, store, model, _, _ = chat_engine(factory, draft=True, review_strategy="inline")
+    engine.private_policies["bilibili"] = {"publication_review": False}  # Synthetic module policy.
+    event = replace(private_event(now), reply_limit=3)
+    store.set_setting("private_intent:"+event.event_id, {"kind": "none"})
+    model.decide = lambda op, payload: dict(response)
+    engine.ingest(event)
+    assert engine.process_one_event(now)
+    actions = store.inspect("actions")
+    expected = response.get("messages", [response.get("text")])
+    assert len(actions) == len(expected)
+    # inspect() returns newest rows first, not multipart send order.
+    assert sorted(json.loads(row["payload"])["text"] for row in actions) == sorted(expected)
+    assert all(row["state"] == "queued" and json.loads(row["payload"])["review_state"] == "not_required" for row in actions)
+    assert sum(r["kind"] == "private_decision_recovered" for r in store.inspect("audit")) == 1
+
+
+@pytest.mark.parametrize("response", [{"text": ""}, {"text": 123}, {"messages": []},
+    {"decision": None, "text": "合成正文"}, {"decision": "send", "text": "合成正文"},
+    {"decision": "skip", "text": "合成正文"}, {"text": "https://invalid.example"},
+    {"text": "正文", "messages": ["不同正文"]}])
+def test_missing_field_recovery_keeps_explicit_choices_and_existing_body_gates(factory, now, response):
+    engine, store, model, _, _ = chat_engine(factory)
+    engine.private_policies["bilibili"] = {"publication_review": False}
+    event = replace(private_event(now), reply_limit=3)
+    store.set_setting("private_intent:"+event.event_id, {"kind": "none"})
+    model.decide = lambda op, payload: dict(response)
+    engine.ingest(event)
+    assert engine.process_one_event(now)
+    assert not store.inspect("actions")
+    if "decision" in response:
+        assert not any(r["kind"] == "private_decision_recovered" for r in store.inspect("audit"))
+
+
+def test_reviewed_private_channel_still_rejects_missing_decision(factory, now):
+    engine, store, model, _, _ = chat_engine(factory)
+    event = private_event(now)
+    store.set_setting("private_intent:"+event.event_id, {"kind": "none"})
+    model.decide = lambda op, payload: {"text": "合成正文"}
+    engine.ingest(event)
+    assert engine.process_one_event(now)
+    assert not store.inspect("actions")
+    assert not any(r["kind"] == "private_decision_recovered" for r in store.inspect("audit"))
+
+
 def test_mutual_nonowner_cannot_access_owner_memories_or_create_owner_request(factory, now):
     engine, store, model, platform, access = chat_engine(factory)
     store.add_memory("owner", "person", "owner_private", "主人的私人情况", "owner-memory", now)

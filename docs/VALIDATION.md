@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-11-05：QQ入站生成协议修复与运行进程核验（D60）
+
+基准de75365，新增24项合成回归，含按操作限定响应协议、system位置、缺字段文字/分条恢复、免审核不依赖can_send、显式skip/null/异种decision保持、空正文/URL/分条不一致阻断、需审核渠道不恢复以及审计不泄露任意值/正文。D:/anaconda3/python.exe -X utf8 scripts/run_tests.py tests --ignore=tests/test_persona_scope.py -k 'not persona'最终1140通过，0失败/错误/运行时跳过，JUnit 290.560秒，3项按名称排除，报告.pytest-tmp/qq-inbound-recovery-full.xml。受限沙箱的兼容版专项为214通过、2项本机套接字WinError10013，放开回环权限后的最终全量已覆盖。此前1128项通过仅对应未加入缺字段恢复的中间版。
+
+真实只读证据：接收服务/worker运行、配置绑定一致；来信已经合并，两个近期私聊事件因“私信回复决策类型无效”各重试三次失败，没有对应回复动作；主动私聊已有受理记录。只检查状态/计数/固定错误，不输出账号或私聊内容。旧模型响应未保存，具体无效值未知。4次合成正常场景真实API中仍有决策无效但有正文，最新一对明确记录一次decision键缺失、一次reply（输入4443、输出46、总4489 token，3.68秒）；这支持应用兼容的必要性，不证明历史错误必定缺字段，也不证明模型永不拒答。
+
+全量通过后暂时仅暂停全局并排空在途工作，核验原进程/端口后重载同一配置的管理台/worker，NapCat保持原进程。替换后的管理台、QQ回调与唯一worker正常，恢复原全局暂停值且保留全部平台暂停，现已加载D59及D60代码。没有重放旧失败/结果未知/草稿，没有人工测试平台写入；新QQ消息的客户端回复仍待用户确认。Docker未重建，原模型中断结束原因缺口未修复，人设范围测试未运行。本地探针/状态备份/结果报告均忽略且不提交。
+
 ## 2026-11-05：请求级私人system配置完整验证（D59）
 
 开发基准fa75ca4。D:/anaconda3/python.exe -X utf8、scripts/run_tests.py及忽略目录测试依赖，模拟HTTP/假平台/隔离数据库。新增tests/test_private_prompt_requests.py 20项合成协议用例；专项132通过，0失败/错误，16.064秒（.pytest-tmp/private-system-targeted.xml）。完整tests --ignore=tests/test_persona_scope.py -k 'not persona'共1116通过，0失败/错误/运行时跳过，273.394秒（.pytest-tmp/private-system-full.xml）；排除的人设用例不计入运行数。
