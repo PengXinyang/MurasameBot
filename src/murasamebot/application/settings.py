@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from murasamebot.application.autonomy import AutonomySettings
 from murasamebot.application.social import SocialSettings
+from murasamebot.application.recommendation_policy import VIDEO_INTEREST_KEYWORDS
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class Behaviour:
     reactive_video_comments_only: bool = False
     min_video_views: int | None = None
     min_video_comments: int | None = None
+    video_selection_mode: str = "legacy"  # Config defaults to read_then_decide; old direct constructors remain compatible.
+    video_interest_keywords: tuple[str, ...] = VIDEO_INTEREST_KEYWORDS
     video_like: bool = False
     video_coin: bool = False
     dynamic_like: bool = False

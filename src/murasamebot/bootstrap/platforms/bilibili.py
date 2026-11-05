@@ -154,8 +154,12 @@ class BilibiliModule(PlatformModule):
 
 
     def guard(self, config, action, now):
-        if config.data["browsing"].get("recommendation_only",True) and action.kind in {"browse_comment", "browse_reply", "owner_comment"}:
+        new_video = (config.data["browsing"].get("video_selection_mode","read_then_decide") == "read_then_decide"
+                     and action.content and action.content.kind == "video")
+        if not new_video and config.data["browsing"].get("recommendation_only",True) and action.kind in {"browse_comment", "browse_reply", "owner_comment"}:
             return "仅推荐模式：禁止主动普通评论与接话"
+        if new_video and action.kind == "owner_comment" and not config.data["browsing"].get("comment_videos",True):
+            return "主动视频评论功能已关闭"
         if action.kind in {"browse_comment", "browse_reply", "recommendation"}:
             key = {"browse_comment": "comment_videos", "browse_reply": "reply_comments", "recommendation": "recommend_owner"}[action.kind]
             if not config.data["browsing"].get(key, True):

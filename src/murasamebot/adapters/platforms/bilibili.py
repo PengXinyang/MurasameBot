@@ -96,6 +96,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         self._sync_cookies()
         self._wbi_key: tuple[str, float] | None = None
         self._account: dict | None = None
+        self._video_previews = {}
         self.video_frames_enabled = video_frames_enabled
         self.video_frames = VideoShotReader(self._request, count=video_frame_count, max_parts=video_frame_max_parts,
                                             cache_minutes=frame_cache_minutes, retry_minutes=frame_retry_minutes,
@@ -129,7 +130,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
     def account_id(self) -> str:
         return self.expected_uid or self.credentials.get("DedeUserID", "") or (self._account or {}).get("uid", "")
 
-    def _request(self, path: str, *, params=None, data=None, signed=False):
+    def _request(self, path: str, *, params=None, data=None, signed=False, allow_list=False):
         url = path if path.startswith("https://") else API + path
         host = urlparse(url).hostname or ""
         if host not in {"api.bilibili.com", "api.vc.bilibili.com", "passport.bilibili.com"}:
@@ -156,7 +157,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
             raise PlatformError(f"平台接口错误 {code}", code=str(code), pause=pause,
                                 retry_at=self.monitor.retry_at(urlparse(url).path) if code==-509 and self.monitor and data is None else 0)
         result = payload.get("data") or {}
-        if not isinstance(result, dict):
+        if not isinstance(result, (dict,list) if allow_list else dict):
             raise PlatformError("平台数据格式无效")
         return result, response
 
@@ -425,13 +426,42 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
                 continue
         return ""
 
+    def preview(self, ref: ContentRef) -> Document:
+        if ref.provider != "bilibili" or ref.kind != "video":
+            raise PlatformError("轻量选片只支持视频引用")
+        data, _ = self._request("/x/web-interface/view", params={"aid": numeric(ref.external_id)})
+        title, description = plain(data.get("title")), str(data.get("desc") or "")[:3000]
+        tags = ()
+        if local_topic(title,description,data.get("tname")) != "sensitive":
+            try:
+                rows, _ = self._request("/x/tag/archive/tags",params={"aid": numeric(ref.external_id)},allow_list=True)
+                if isinstance(rows,list):
+                    tags = tuple(plain(row["tag_name"])[:100] for row in rows[:100]
+                        if isinstance(row,dict) and isinstance(row.get("tag_name"),str))
+            except CorePlatformError as exc:
+                if exc.pause or exc.retry_at or exc.code not in {"-404", "-400"}:
+                    raise
+                # Only a confirmed optional-tag absence degrades. Network,
+                # authentication and rate-limit errors must not permit more reads.
+        self._video_previews[ref.key] = (time.monotonic(),data,tags)
+        if len(self._video_previews)>100:
+            self._video_previews.pop(next(iter(self._video_previews)))
+        return Document(ref,title,description,"metadata",str((data.get("owner") or {}).get("mid", "")),
+            str(data.get("tid", "")),"https://www.bilibili.com/video/"+str(data.get("bvid", "")),
+            view_count=(data.get("stat") or {}).get("view"),comment_count=(data.get("stat") or {}).get("reply"),tags=tags)
+
     def read(self, ref: ContentRef, *, reply_to="", root="", context: ContentRef | None = None, topic_filter=True) -> Document:
         if ref.provider != "bilibili" or ref.kind not in set(COMMENT_TYPES) | {"post"}:
             raise PlatformError("不支持的内容引用")
         oid = numeric(ref.external_id)
         frame_images, frame_context = (), None
+        tags = ()
         if ref.kind == "video":
-            data, _ = self._request("/x/web-interface/view", params={"aid": oid})
+            preview = self._video_previews.pop(ref.key,None)
+            if preview and time.monotonic()-preview[0] <= 60:
+                _,data,tags = preview
+            else:
+                data, _ = self._request("/x/web-interface/view", params={"aid": oid})
             bvid = str(data.get("bvid", ""))
             if topic_filter and local_topic(plain(data.get("title")),data.get("desc"),data.get("tname")) == "sensitive":
                 return Document(ref,plain(data.get("title")),str(data.get("desc") or "")[:3000],"metadata",
@@ -499,7 +529,7 @@ class BilibiliAdapter(BilibiliPrivateMixin, BilibiliEmojiMixin, BilibiliPublicat
         return Document(ref, title, body[:20000], level, author, category, url, comments, images, parent=parent,
                         comment_context=coverage, frame_context=frame_context,
                         view_count=(data.get("stat") or {}).get("view") if ref.kind == "video" else None,
-                        comment_count=(data.get("stat") or {}).get("reply") if ref.kind == "video" else None)
+                        comment_count=(data.get("stat") or {}).get("reply") if ref.kind == "video" else None,tags=tags)
 
     @staticmethod
     def dynamic_images(item: dict) -> tuple[ImageRef, ...]:

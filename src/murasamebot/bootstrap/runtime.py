@@ -252,12 +252,13 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                     if blocked(topic,owner):
                         detail = {"sensitive":"敏感话题","serious":"非主人严肃话题"}.get(topic,"话题分类未完成或无效")
                         return "公开话题限制：" + label + "：" + detail
-            if action.content and action.content.kind == "video" and action.kind in {"recommendation", "task_result", "browse_comment", "browse_reply", "owner_comment", "reply"}:
+            if action.content and action.content.kind == "video" and action.kind in {"recommendation", "task_result", "browse_comment", "browse_reply", "owner_comment", "reply", "like", "coin"}:
                 from murasamebot.application.recommendation_policy import popularity_allows, reactive_video_reply
                 browse = current.data["browsing"]
                 document = store.cached_document(action.content,now) if action.content else None
                 source_event = store.event(action.event_id) if action.event_id else None
-                if (action.platform == "bilibili" and browse.get("reactive_video_comments_only",True)
+                new_video = browse.get("video_selection_mode","read_then_decide") == "read_then_decide"
+                if (not new_video and action.platform == "bilibili" and browse.get("reactive_video_comments_only",True)
                         and action.kind in {"reply", "browse_comment", "browse_reply", "owner_comment"}
                         and not reactive_video_reply(action,source_event)):
                     return "视频普通评论仅响应提及或回复通知，禁止主动接话"
@@ -268,7 +269,17 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                 explicit_mention = (action.kind == "reply" and action.visibility == "public" and source_event and source_event.kind == "mention"
                     and source_event.visibility == "public" and source_event.platform == action.platform
                     and source_event.account_id == action.account_id and source_event.content == action.content)
-                if not reactive and not explicit_mention and not popularity_allows(document,browse.get("min_video_views",8000),browse.get("min_video_comments",20),exempt_authors=exempt_authors):
+                task = store.task(action.task_id) if new_video and action.task_id else None
+                explicit_task = bool(task and source_event and task["event_id"] == source_event.event_id == action.event_id
+                    and task["version"] == action.task_version and source_event.kind in {"chat","private_message","mention","reply"}
+                    and store.resolve_person(source_event.platform,source_event.actor_id) == task["person_id"])
+                exact_inbound = bool(source_event and source_event.kind in {"mention","reply"}
+                    and source_event.visibility == "public" and source_event.content == action.content
+                    and source_event.platform == action.platform and source_event.account_id == action.account_id
+                    and (reactive_video_reply(action,source_event) or action.kind in {"like","coin"}))
+                exempt = (explicit_task or exact_inbound) if new_video else (reactive or explicit_mention or action.kind in {"like","coin"})
+                if not exempt and not popularity_allows(document,browse.get("min_video_views",8000),browse.get("min_video_comments",20),exempt_authors=exempt_authors,
+                        exempt_keywords=browse.get("video_interest_keywords",()) if new_video else ()):
                     return "视频统计缺失或未超过当前推荐门槛，禁止推荐"
             if action.owner_activity_version:
                 active_history = current_history(current)

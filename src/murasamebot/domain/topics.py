@@ -33,7 +33,7 @@ def blocked(topic, owner=False):
 def document_topic(document, message=""):
     if document is None:
         return local_topic(message)
-    local = local_topic(document.title,document.text,message,
+    local = local_topic(document.title,document.text,message,*document.tags,
                         document.visual.summary if document.visual and document.visual.indices else "",
                         *(c.get("text","") for c in document.comments))
     return combined_topic(local,document.topic_class) if document.topic_class in {"sensitive","serious"} else local

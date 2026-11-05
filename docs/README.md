@@ -1,6 +1,6 @@
 # 项目记忆索引
 
-索引更新：2026-11-04。当前归并快照以[STATUS.md](STATUS.md)为准，历史日志和专题中的旧“未实现/未验收”需按后续记录判断。各专题的代码核对日期见其正文。这些文档帮助后续开发恢复上下文；机器人运行时的角色与用户记忆不从这里加载。
+索引更新：2026-11-05。当前归并快照以[STATUS.md](STATUS.md)为准，历史日志和专题中的旧“未实现/未验收”需按后续记录判断。各专题的代码核对日期见其正文。这些文档帮助后续开发恢复上下文；机器人运行时的角色与用户记忆不从这里加载。
 
 | 文件 | 用途 |
 | --- | --- |
@@ -20,6 +20,7 @@
 | [DSH_PROMPT_MIGRATION.md](DSH_PROMPT_MIGRATION.md) | dsh-purge/无限二代源码核对、已迁移的人设写法与尚未实现的工程适配 |
 | [SOCIAL_CHAT_MODEL_PLAN.md](SOCIAL_CHAT_MODEL_PLAN.md) | 社交机器人提示词/会话上下文/响应分类改造方案，含已复现但未修复的模型中断结果缺口 |
 | [VIDEO_VISION.md](VIDEO_VISION.md) | 视频快照配置、裁图/时间映射、视觉证据及降级边界 |
+| [VIDEO_SELECTION.md](VIDEO_SELECTION.md) | 自主选片先筛后读、题目/标签/作者豁免、明确请求及旧模式回退 |
 | [VIDEO_UNDERSTANDING_PLAN.md](VIDEO_UNDERSTANDING_PLAN.md) | 视频理解规划（未开发）：分镜总览、高清细看、分析资产、上游分支对比、阶段与验收 |
 | [ROADMAP.md](ROADMAP.md) | 现有QQ/B站/Docker的验收顺序、可靠性与尚未开发范围 |
 | [QQ_INTEGRATION.md](QQ_INTEGRATION.md) | QQ功能范围、模块化单体选择及Q0～Q4历史规划；当前落地与验收见STATUS |

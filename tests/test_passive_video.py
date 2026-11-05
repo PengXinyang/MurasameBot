@@ -65,6 +65,8 @@ def test_runtime_blocks_old_proactive_actions_but_allows_same_target_reply(tmp_p
     from murasamebot.bootstrap.runtime import build
     from test_architecture_and_config import write_config
     config=Config(write_config(tmp_path))
+    config.save_local({"browsing":{"video_selection_mode":"legacy"}})
+    config=Config(config.path)
     platform=TestPlatform()
     platform.account_id,platform.configured="robot",True
     platform.close=lambda:None

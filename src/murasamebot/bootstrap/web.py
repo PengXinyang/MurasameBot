@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hmac
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import json
 import os
 from pathlib import Path
@@ -11,6 +11,7 @@ import time
 from urllib.parse import urlparse, parse_qs
 
 from murasamebot.bootstrap.config import Config
+from murasamebot.bootstrap.http_server import ExclusiveHTTPServer as ThreadingHTTPServer
 from murasamebot.bootstrap.runtime import build, prepare_store, readiness
 from murasamebot.bootstrap.owner_history import OwnerLoginManager, history_status, history_source, history_service, optional_history
 from murasamebot.application.request_policy import RequestSettings

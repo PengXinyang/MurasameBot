@@ -133,6 +133,7 @@ class Document:
     frame_context: FrameContext | None = None
     view_count: int | None = None
     comment_count: int | None = None
+    tags: tuple[str, ...] = ()
 
     def public_context(self) -> dict[str, Any]:
         return asdict(self)
@@ -142,6 +143,7 @@ class Document:
         values = dict(data)
         values["ref"] = ContentRef(**values["ref"])
         values["comments"] = tuple(values.get("comments", ()))
+        values["tags"] = tuple(values.get("tags", ()))
         values["images"] = tuple(ImageRef(**{**image, "crop": tuple(image.get("crop", ()))}) for image in values.get("images", ()))
         if isinstance(values.get("frame_context"), dict):
             frames = dict(values["frame_context"])

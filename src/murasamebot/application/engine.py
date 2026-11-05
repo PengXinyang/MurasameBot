@@ -101,10 +101,34 @@ class SocialEngine:
         binding = self.store.binding(self.settings.owner_person_id, document.ref.provider) if document else None
         accounts = dict(self.routing()) if self.routing else {self.settings.platform: self.settings.account_id}
         return popularity_allows(document, self.settings.min_video_views, self.settings.min_video_comments,
-            exempt_authors=(binding["external_id"] if binding else "", accounts.get(document.ref.provider, "") if document else ""))
+            exempt_authors=(binding["external_id"] if binding else "", accounts.get(document.ref.provider, "") if document else ""),
+            exempt_keywords=self.settings.video_interest_keywords if self.settings.video_selection_mode == "read_then_decide" else ())
+
+    def autonomous_document(self, ref, now):
+        """Select from cheap metadata before any content/vision/model work."""
+        if ref.kind != "video" or self.settings.video_selection_mode != "read_then_decide":
+            return self.document(ref,now)
+        preview = getattr(self.providers[ref.provider], "preview", None)
+        if preview is None:
+            raise PolicyError("视频提供方缺少轻量元数据接口，未读取视频")
+        metadata = preview(ref)
+        if metadata.ref != ref or metadata.evidence_level != "metadata" or metadata.images or metadata.visual or metadata.comments or metadata.frame_context:
+            raise PolicyError("选片元数据接口返回了错误引用或非元数据内容")
+        binding = self.store.binding(self.settings.owner_person_id,ref.provider)
+        owner = bool(binding and metadata.author_id == binding["external_id"])
+        if blocked(document_topic(metadata),owner) or not self.popularity_allowed(metadata):
+            # Do not mark a rejected preview as watched: it may qualify later.
+            self.store.audit("video_read_skipped", "自主选片未满足话题或题材/作者/热度条件，未读取字幕、评论或画面", now)
+            return None
+        document = self.document(ref,now)
+        document = replace(document,title=metadata.title,author_id=metadata.author_id,
+            category_id=metadata.category_id,view_count=metadata.view_count,
+            comment_count=metadata.comment_count,tags=metadata.tags)
+        self.store.cache_document(document,now)
+        return document
 
     def enqueue_generated(self, action, result, now):
-        if (self.settings.reactive_video_comments_only and action.platform == "bilibili"
+        if (self.settings.video_selection_mode != "read_then_decide" and self.settings.reactive_video_comments_only and action.platform == "bilibili"
                 and action.content and action.content.kind == "video"
                 and action.kind in {"reply", "owner_comment", "browse_comment", "browse_reply"}
                 and not reactive_video_reply(action, self.store.event(action.event_id) if action.event_id else None)):
@@ -435,7 +459,8 @@ class SocialEngine:
             self.store.audit("topic_skipped","当前消息触发公开话题限制",now)
             return
         owner_content = event.kind == "owner_content"
-        if owner_content and (self.settings.recommendation_only or (self.settings.reactive_video_comments_only and event.content and event.content.kind == "video")):
+        new_video = self.settings.video_selection_mode == "read_then_decide" and event.content and event.content.kind == "video"
+        if owner_content and not new_video and (self.settings.recommendation_only or (self.settings.reactive_video_comments_only and event.content and event.content.kind == "video")):
             self.store.audit("skipped", "仅推荐模式：不主动评论主人作品", now)
             return
         if owner_content:
@@ -444,8 +469,15 @@ class SocialEngine:
                 raise PolicyError("主人内容事件的作者与绑定不一致")
             if event.content and self.store.has_action_for_content(event.content.key, now):
                 return
-        document = self.document(event.content, now, reply_to=event.reply_to, root=event.thread_root, context=event.share_content) if event.content else None
-        reactive_video = (self.settings.reactive_video_comments_only and event.platform == "bilibili"
+        if owner_content and new_video:
+            if not self.settings.comment_videos:
+                return
+            document = self.autonomous_document(event.content,now)
+            if document is None:
+                return
+        else:
+            document = self.document(event.content, now, reply_to=event.reply_to, root=event.thread_root, context=event.share_content) if event.content else None
+        reactive_video = ((self.settings.reactive_video_comments_only or new_video) and not owner_content and event.platform == "bilibili"
                           and document and document.ref.kind == "video")
         if reactive_video and (event.kind not in {"mention", "reply"} or not event.reply_to):
             self.store.audit("skipped", "视频仅响应提及或回复通知，不主动评论", now)
@@ -520,7 +552,9 @@ class SocialEngine:
         binding = self.store.binding(self.settings.owner_person_id, event.platform)
         if not binding or binding["external_id"] != event.actor_id or not event.content:
             raise PolicyError("主人转发事件的作者与绑定不一致")
-        document = self.document(event.content, now)
+        document = self.autonomous_document(event.content, now)
+        if document is None:
+            return
         if document.author_id != event.actor_id:
             raise PolicyError("不能转发作者未验证的主人内容")
         if blocked(document_topic(document),True):
@@ -643,7 +677,7 @@ class SocialEngine:
             # Persist before doing slow work so restarts don't trigger a burst.
             self.store.set_setting("last_browse", now)
             refs = self.providers[self.settings.platform].discover(self.settings.categories, self.settings.candidate_limit)
-            for ref in refs:
+            for ref in refs[:self.settings.candidate_limit]:
                 moment = time.time() if live_clock else now
                 if next_window(moment, self.settings.timezone, self.settings.windows, self.settings.weekdays) > moment:
                     break
@@ -651,8 +685,10 @@ class SocialEngine:
                     break
                 if self.store.has_viewed(ref, now) or self.store.has_action_for_content(ref.key, now):
                     continue
+                document = self.autonomous_document(ref, now)
+                if document is None:
+                    continue
                 count += 1
-                document = self.document(ref, now)
                 if not self.can_evaluate(document):
                     self.store.record_view(ref, "无内容证据，略过主动评论", now)
                     continue
@@ -670,7 +706,8 @@ class SocialEngine:
         return route.get("mode")=="private" and self.private_policies.get(route.get("platform"),{}).get("topic_filter") is False
 
     def _evaluate(self, document: Document, now: float, task: dict | None = None, *, owner_observation=None) -> bool:
-        if not self.popularity_allowed(document):
+        new_video = self.settings.video_selection_mode == "read_then_decide" and document.ref.kind == "video"
+        if not (new_video and task) and not self.popularity_allowed(document):
             self.store.record_view(document.ref,"播放量或评论数未严格超过推荐门槛，或统计缺失",now)
             return False
         if self.unfiltered_private_task(task):
@@ -683,7 +720,8 @@ class SocialEngine:
             return False
         if task and task.get("route",{}).get("mode")=="private":
             return self._private_task_result(document, task, now)
-        passive_video = self.settings.reactive_video_comments_only and document.ref.provider == "bilibili" and document.ref.kind == "video"
+        only_recommend = self.settings.recommendation_only and not new_video
+        passive_video = not new_video and self.settings.reactive_video_comments_only and document.ref.provider == "bilibili" and document.ref.kind == "video"
         # This payload is deliberately independent of the original private message.
         # Capture before preferences are read, so concurrent forgetting/correction
         # invalidates the whole decision, not just the eventual recommendation.
@@ -696,7 +734,7 @@ class SocialEngine:
             "requested_topic": task["topic"] if task else owner_observation["topic"] if owner_observation else None,
             "memory_epoch": epoch,
             "max_characters": self.settings.max_recommendation_characters if task else self.settings.max_comment_characters,
-            "comment_videos": self.settings.comment_videos and not owner_observation and not self.settings.recommendation_only and not passive_video, "reply_comments": self.settings.reply_comments and task is None and not owner_observation and not self.settings.recommendation_only and not passive_video,
+            "comment_videos": self.settings.comment_videos and task is None and not owner_observation and not only_recommend and not passive_video, "reply_comments": self.settings.reply_comments and task is None and not owner_observation and not only_recommend and not passive_video,
             "recommend_owner": self.settings.recommend_owner,
             "topic_owner_exception": owner,
         }, document.ref.provider, self.settings.account_id, "public", now)
@@ -716,16 +754,16 @@ class SocialEngine:
         if not owner_observation and not (task and task.get("route")):
             self._queue_reactions(document, now, result.get("interested") is True,memory_epoch=result["_memory_epoch"])
         extra = result.get("comment_reply")
-        if not self.settings.recommendation_only and not owner_observation and task is None and decision != "reply" and self.settings.reply_comments and isinstance(extra, dict) and extra.get("reply_to"):
+        if not only_recommend and not owner_observation and task is None and decision != "reply" and self.settings.reply_comments and isinstance(extra, dict) and extra.get("reply_to"):
             try:
                 self._queue_browse_reply(readable, extra, options, now,memory_epoch=result["_memory_epoch"])
             except PolicyError:
                 self.store.audit("browse_reply_skipped", "额外接话目标或正文无效，未生成评论区回复", now)
         if decision == "skip":
             return False
-        if self.settings.recommendation_only and decision in {"comment", "reply"}:
+        if only_recommend and decision in {"comment", "reply"}:
             return False
-        if decision == "recommend" and not self.popularity_allowed(document):
+        if decision == "recommend" and not (new_video and task) and not self.popularity_allowed(document):
             self.store.audit("recommendation_skipped", "视频播放量或评论数未严格超过门槛，或统计缺失", now)
             return False
         if task and decision != "recommend":
@@ -761,7 +799,7 @@ class SocialEngine:
         return self.enqueue_generated(action,result,now)
 
     def _private_task_result(self, document, task, now):
-        if not self.popularity_allowed(document):
+        if self.settings.video_selection_mode != "read_then_decide" and not self.popularity_allowed(document):
             return False
         route = task["route"]
         binding = self.store.binding(task["person_id"],route["platform"])
@@ -803,7 +841,7 @@ class SocialEngine:
         return self.enqueue_generated(action,result,now)
 
     def _queue_browse_reply(self, document, result, options, now, *, memory_epoch: int):
-        if self.settings.recommendation_only:
+        if self.settings.recommendation_only and self.settings.video_selection_mode != "read_then_decide":
             return False
         target = next((c for c in document.comments if c.get("id") == str(result.get("reply_to", "")) and c.get("author_id") != self.settings.account_id), None)
         if target is None:

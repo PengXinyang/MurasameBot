@@ -150,10 +150,12 @@ browsing:
   comment_videos: true
   reply_comments: true
   recommend_owner: true
-  reactive_video_comments_only: true  # No ordinary autonomous comments; qualifying owner recommendations remain enabled.
-  recommendation_only: true  # ordinary proactive comments/replies are disabled
+  video_selection_mode: read_then_decide  # Metadata selection first; then AI may skip, comment or recommend.
+  video_interest_keywords: [千恋万花, 千恋＊万花, galgame, gal game, 美少女游戏, 美少女遊戲, 柚子社, ゆずソフト, yuzusoft, Key社, 键社, key, TYPE-MOON, typemoon, 型月, SAGA PLANETS, SMEE, ASa Project, Lump of Sugar, LumpofSugar, 调色板社, ぱれっと, Palette, Purple software, Navel, August, 八月社, オーガスト, Frontwing, 枕社, ケロQ, KeroQ, まどそふと, Qruppo, HARUKAZE, sprite, "tone work's", FAVORITE, ういんどみる, Nitroplus, ニトロプラス, AQUAPLUS, 戯画, 戏画社]
+  reactive_video_comments_only: true  # Legacy mode only.
+  recommendation_only: true  # Legacy mode only; ignored for videos in read_then_decide.
   min_video_views: 8000  # strict >, unknown counts cannot qualify
-  min_video_comments: 20  # strict >; includes explicit tasks and private recommendations
+  min_video_comments: 20  # strict >; read_then_decide applies only to autonomous selection.
   weekdays: [0, 1, 2, 3, 4, 5, 6]  # Monday = 0
   windows:
     - start: "19:00"

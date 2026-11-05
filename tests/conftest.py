@@ -46,6 +46,9 @@ class TestPlatform:
         return self.documents.get(ref.key, Document(ref, "摄影入门", "本节介绍曝光、构图与练习方法。", "transcript", "123", "188",
                                                   comments=({"id": "700", "root": "600", "text": "应该怎么练习？"},),view_count=9000,comment_count=30))
 
+    def preview(self, ref):
+        return replace(self.read(ref),evidence_level="metadata",images=(),visual=None,comments=(),frame_context=None)
+
     def search(self, query, category_ids, limit):
         self.searches.append((query, list(category_ids)))
         return [self.ref]

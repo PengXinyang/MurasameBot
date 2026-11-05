@@ -174,7 +174,9 @@ class OwnerHistoryService:
             for ref in refs[:e.settings.videos_per_round]:
                 if ref.external_id in watched or db.has_action_for_content(ref.key,now):
                     continue
-                document = e.document(ref,now)
+                document = e.autonomous_document(ref,now)
+                if document is None:
+                    continue
                 if not e.can_evaluate(document):
                     continue
                 observation = {"topic":topic,"version":context["owner_activity_version"],

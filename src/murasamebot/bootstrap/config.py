@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from murasamebot.application.settings import Behaviour
+from murasamebot.application.recommendation_policy import VIDEO_INTEREST_KEYWORDS
 from murasamebot.application.memory import MemorySettings
 from murasamebot.application.group_chat import DEFAULTS as GROUP_DEFAULTS
 from murasamebot.application.group_learning import DEFAULTS as LEARNING_DEFAULTS
@@ -98,7 +99,8 @@ class Config:
                      "qq_autonomy":{**asdict(AutonomySettings()),"daily_decision_limit":32,"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_calls":CALL_DEFAULTS,"qq_groups":GROUP_DEFAULTS,"qq_learning":LEARNING_DEFAULTS,
                      "limits":{"event_retry_seconds":60},
-                     "browsing":{"recommendation_only":True,"reactive_video_comments_only":True,"min_video_views":8000,"min_video_comments":20},
+                     "browsing":{"recommendation_only":True,"reactive_video_comments_only":True,"min_video_views":8000,"min_video_comments":20,
+                                 "video_selection_mode":"read_then_decide","video_interest_keywords":list(VIDEO_INTEREST_KEYWORDS)},
                      "network":{"proxy_mode":"gfwlist", "gfwlist_url":GFWLIST_URL,
                                 "gfwlist_cache":"data/gfwlist.txt", "gfwlist_refresh_hours":6,
                                 "direct_domains":list(DIRECT_DOMAINS)}},raw)
@@ -228,6 +230,13 @@ class Config:
             raise ValueError("首版所有文字输出固定为中文；日语仅为未来语音预留")
         ZoneInfo(data.get("timezone", "Asia/Hong_Kong"))
         browse = data.get("browsing", {})
+        if (not isinstance(browse.get("video_selection_mode", "read_then_decide"),str) or
+                browse.get("video_selection_mode", "read_then_decide") not in {"read_then_decide", "legacy"}):
+            raise ValueError("视频选片模式无效")
+        keywords = browse.get("video_interest_keywords", list(VIDEO_INTEREST_KEYWORDS))
+        if (not isinstance(keywords,list) or len(keywords)>100 or
+                any(not isinstance(word,str) or not 1<=len(word.strip())<=80 for word in keywords)):
+            raise ValueError("视频题材豁免词须为最多100项的非空文字列表")
         if type(browse.get("recommendation_only",True)) is not bool:
             raise ValueError("仅推荐模式需要为布尔值")
         if type(browse.get("reactive_video_comments_only",True)) is not bool:
@@ -440,6 +449,8 @@ class Config:
                          allow_metadata_video=browse.get("allow_metadata_video", True),
                          recommendation_only=browse.get("recommendation_only",True),
                          reactive_video_comments_only=browse.get("reactive_video_comments_only",True),
+                         video_selection_mode=browse.get("video_selection_mode","read_then_decide"),
+                         video_interest_keywords=tuple(browse.get("video_interest_keywords",VIDEO_INTEREST_KEYWORDS)),
                          min_video_views=browse.get("min_video_views",8000),min_video_comments=browse.get("min_video_comments",20),
                          **{key: browse.get(key, True) for key in ("comment_videos", "reply_comments", "recommend_owner")},
                          **{key: self.data.get("engagement", {}).get(key, False) for key in ("video_like", "video_coin", "dynamic_like")},

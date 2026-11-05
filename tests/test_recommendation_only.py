@@ -114,7 +114,7 @@ def test_runtime_rechecks_threshold_changes_and_mention_source(tmp_path,now):
     from murasamebot.bootstrap.runtime import build
     from murasamebot.bootstrap.platforms.bilibili import CAPABILITIES
     config=Config(write_config(tmp_path))
-    config.save_local({"mode":"auto","browsing":{"reactive_video_comments_only":False}})
+    config.save_local({"mode":"auto","browsing":{"video_selection_mode":"legacy","reactive_video_comments_only":False}})
     platform=TestPlatform()
     platform.account_id,platform.configured="robot",True
     platform.close=lambda:None

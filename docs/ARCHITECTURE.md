@@ -1,5 +1,9 @@
 # 当前架构
 
+2026-11-05（D63）：bootstrap/http_server.py提供ExclusiveHTTPServer，管理台及QQ回调装配同一监听类；Windows使用独占地址绑定阻止重复serve共享端口，POSIX保持正常重启。WorkerLock仍独立保护决策循环，HTTP独占不授予发送权限。
+
+2026-11-05（D62）：ContentProvider新增preview，Document新增兼容旧缓存的tags；自主视频先检查轻量元数据，再调用原document/vision与evaluate_video。B站实现view/tags及同Runtime有界复用；应用不导入SDK。默认新模式覆盖视频旧仅推荐/被动限制，可回退legacy；明确任务和真实通知免统计，但持久来源/权限及最终发送政策保持。无schema或独立循环。见[视频选片](VIDEO_SELECTION.md)。
+
 2026-11-05（D61）：worker在独占WorkerLock后仅恢复旧协调器读取租约。WorkerCoordinator以每平台最多一个Future调用Runtime.poll/poll_private(platforms=...)，完整身份/观察/路由Runtime保持；各收件任务与消息/审核/单sender共用原协调器及模型限流，线程池辅助容量为40。last_tick/worker_heartbeat表示调度推进，last_poll:<平台>表示该轮收件完成；适配器GET节奏不变。管理台读取心跳显示停滞并区分文件锁冲突/配置错误。SocialService上下文暂不可用只跳过，持久来源校验仍负责确认删除/撤权/过期后的清理。无schema迁移，详见D61、平台服务及社交状态说明。
 
 2026-11-05（D60）：网关在system末尾按本次私人操作限定decision。SocialEngine仅对模块声明免发布审核的private_chat兼容“有正文但decision键缺失”，保留显式决策与既有正文/来源/发送门禁；新增脱敏形状诊断。不增加模型请求、发送循环或schema，实际QQ排障与验证见QQ_PRIVATE_CHAT及VALIDATION。

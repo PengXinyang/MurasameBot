@@ -4,9 +4,10 @@ import hmac
 import json
 import re
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 
 from murasamebot.bootstrap.config import Config
+from murasamebot.bootstrap.http_server import ExclusiveHTTPServer as ThreadingHTTPServer
 from murasamebot.bootstrap.runtime import prepare_store
 from murasamebot.adapters.persistence.chat_batches import ChatBatches
 from murasamebot.adapters.platforms.qq import QQAdapter
