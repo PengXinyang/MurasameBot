@@ -1,8 +1,13 @@
 """Process-owned event transports; all platforms share the existing coordinator."""
 from dataclasses import dataclass
+from contextlib import closing
+import json
+import sqlite3
 from threading import Event, RLock, Thread
+import time
 
 from murasamebot.bootstrap.config import Config
+from murasamebot.bootstrap.worker_lock import WorkerConflictError
 
 
 class HTTPReceiver:
@@ -54,6 +59,7 @@ class ReceiverManager:
         self.lock, self.stop = RLock(), Event()
         self.active, self.receivers, self.errors = set(), {}, {}
         self.worker, self.worker_error, self.closed = None, "", False
+        self.worker_started_at = 0.0
 
     def worker_config(self, path):
         config = Config(path)
@@ -73,7 +79,9 @@ class ReceiverManager:
         except Exception as exc:
             # Never expose arbitrary upstream exception strings/URLs/secrets.
             with self.lock:
-                self.worker_error = ("工作循环未启动：可能已有独立worker，请先停止原进程并检查本地配置"
+                self.worker_error = ("工作循环冲突：另一个进程已占用同一角色，请检查原管理台或独立run进程"
+                                     if isinstance(exc, WorkerConflictError) else
+                                     "工作循环配置检查失败，请检查模型和平台配置"
                                      if isinstance(exc, ValueError) else "工作循环异常退出，请检查本地配置后重新启动")
 
     def _start(self, name):
@@ -95,6 +103,7 @@ class ReceiverManager:
         self.errors.pop(name, None)
         if self.worker is None or not self.worker.is_alive():
             self.worker_error = ""
+            self.worker_started_at = time.time()
             self.worker = Thread(target=self._work, name="murasame-worker", daemon=True)
             self.worker.start()
 
@@ -161,6 +170,16 @@ class ReceiverManager:
         config = Config(self.path)
         with self.lock:
             worker = bool(self.worker and self.worker.is_alive() and not self.stop.is_set())
+            heartbeat = self.worker_started_at
+            try:
+                with closing(sqlite3.connect(config.file("database").as_uri()+"?mode=ro", uri=True, timeout=1)) as db:
+                    row = db.execute("SELECT value FROM settings WHERE agent_id=? AND key='worker_heartbeat'", (config.data["agent_id"],)).fetchone()
+                if row and type(value := json.loads(row[0])) in (int, float):
+                    heartbeat = max(heartbeat, value)
+            except (OSError, sqlite3.Error, ValueError):
+                pass  # A missing/new database must not break transport controls.
+            age = max(0, time.time()-heartbeat) if heartbeat else None
+            stalled = bool(worker and age is not None and age > 30)
             platforms = {}
             for name, spec in self.registry.items():
                 enabled = name in config.enabled_platforms
@@ -171,10 +190,13 @@ class ReceiverManager:
                 error = self.errors.get(name, "") or (self.worker_error if selected else "")
                 if selected and spec.factory and not listening and not error:
                     error = "事件接收服务已退出，请重新启动"
+                if selected and stalled and not error:
+                    error = "工作循环超过30秒未推进；接收器在线不代表消息正在处理，请检查管理台进程"
                 platforms[name] = {"enabled": enabled, "selected": selected, "running": running,
                     "mode": spec.mode, "listening": listening, "error": error,
-                    "state": "error" if error else "running" if running else "stopped"}
+                    "state": "stalled" if selected and stalled else "error" if error else "running" if running else "stopped"}
             return {"managed": True, "worker_running": worker, "worker_error": self.worker_error,
+                    "worker_stalled": stalled, "worker_heartbeat_age_seconds": round(age, 1) if age is not None else None,
                     "platforms": platforms}
 
     def close(self):

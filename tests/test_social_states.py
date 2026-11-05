@@ -305,6 +305,51 @@ def test_history_state_is_source_backed_and_survives_new_history_but_not_clear(f
     assert not s.social_rows(now+1001,include_inactive=True)[0]["source"]["quote"]
 
 
+@pytest.mark.parametrize("unavailable", ["missing_service", "temporarily_disabled", "auth_read_error"])
+def test_observation_service_unavailability_never_scrubs_accepted_reply_or_forgets_valid_sources(factory,now,unavailable):
+    from test_owner_history import setup, record as watched
+    from murasamebot.domain.models import Receipt
+    e,s,_,rows,history=setup(factory)
+    service=SocialService(s,e.settings.social,observations=history)
+    history.sync(now)
+    rows.append(watched(now+61,"43","合成游戏观察"));history.sync(now+62)
+    captured=service.capture({"social_update":update(source="owner_observation",quote="合成游戏观察",summary="一条合成的授权观察。",feeling="curious")},
+        person="owner",context=history.private_context("owner",now+62),now=now+63)
+    assert captured["id"]
+    ev=private_event(now+64)
+    s.enqueue_event(ev);s.finish_event(ev.event_id,"done")
+    text="这是一条已受理的合成回复，不能因服务暂不可用而被抹掉。"
+    accepted=Action("observation-reply",s.agent_id,ev.platform,ev.account_id,None,text,now+64,now+3600,
+        kind="private_reply",visibility="private",recipient_id=ev.actor_id,conversation_id=ev.conversation_id,
+        event_id=ev.event_id,reply_to=ev.reply_to,source_sequence=ev.sequence,
+        social_refs=({"id":captured["id"],"version":1,"projection":"private"},),
+        social_version=e.settings.social.version(),memory_epoch=s.get_setting("memory_epoch",0))
+    assert s.enqueue_action(accepted,draft=False,now=now+64)
+    assert s.claim_action(now+65,100,100,now-86400,0,0).action_id==accepted.action_id
+    s.finish_action(accepted.action_id,Receipt("accepted","synthetic-receipt"),now+65)
+    if unavailable=="missing_service":
+        service.observations=None
+    elif unavailable=="temporarily_disabled":
+        history.settings=replace(history.settings,enabled=False)
+    else:
+        history.source.authorization=lambda binding: (_ for _ in ()).throw(OSError("synthetic temporary error"))
+    assert not service.context(channel="dynamic",now=now+66)["states"]
+    # Missing service still forbids use/dispatch, while it does not prove deletion.
+    assert service.guard(accepted,now+66)
+    row=s.inspect("actions")[0]
+    assert row["state"]=="accepted" and json.loads(row["payload"])["text"]==text
+    assert s.social_rows(now+66)[0]["status"]=="active"
+    service.observations=history
+    history.settings=replace(history.settings,enabled=True)
+    history.source.authorization=lambda binding:"auth"
+    assert service.context(channel="dynamic",now=now+67)["states"]
+    # A genuine source clear still scrubs the accepted local copy and its state.
+    s.owner_history_reset("owner",now+68)
+    assert s.social_rows(now+68,include_inactive=True)[0]["status"]=="forgotten"
+    assert json.loads(s.inspect("actions")[0]["payload"])["text"]=="[社交来源已遗忘]"
+    assert service.guard(accepted,now+69)
+
+
 def test_history_jealousy_requires_separate_switch_and_three_distinct_records(factory,now):
     from test_owner_history import setup, record as watched
     e,s,m,rows,history=setup(factory)

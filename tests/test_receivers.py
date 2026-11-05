@@ -232,7 +232,7 @@ def test_worker_lock_rejects_other_process_and_releases_after_close(tmp_path):
     with WorkerLock(Config(path)):
         result = subprocess.run([sys.executable,'-c',code,str(ROOT/'src'),str(path)],capture_output=True,timeout=10)
         assert result.returncode != 0
-        assert 'ValueError' in result.stderr.decode('utf-8',errors='replace')
+        assert 'WorkerConflictError' in result.stderr.decode('utf-8',errors='replace')
     result = subprocess.run([sys.executable,'-c',code,str(ROOT/'src'),str(path)],capture_output=True,timeout=10)
     assert result.returncode == 0, result.stderr
 

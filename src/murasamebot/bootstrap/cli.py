@@ -51,6 +51,14 @@ def online_account_checks(runtime):
 def worker_loop(config_path: Path, stop: StopEvent, *, once=False, config_loader=Config):
     from murasamebot.bootstrap.worker_lock import WorkerLock
     with WorkerLock(Config(config_path)):
+        # Only the exclusive OS worker owner may discard orphaned read leases.
+        # Action leases, GET slots, cooldowns and provider receipts are untouched.
+        store = prepare_store(Config(config_path))
+        with store.transaction() as db:
+            removed = db.execute("DELETE FROM leases WHERE agent_id=? AND (name IN ('worker_tick','background_decision') OR name GLOB 'worker_poll:*')",
+                                 (store.agent_id,)).rowcount
+        if removed:
+            store.audit("worker_read_leases_recovered", "已取得唯一worker文件锁，清理旧工作循环读取租约", time.time())
         _worker_loop(config_path, stop, once=once, config_loader=config_loader)
 
 
@@ -67,36 +75,29 @@ def _worker_loop(config_path: Path, stop: StopEvent, *, once=False, config_loade
         return
     from murasamebot.bootstrap.workers import WorkerCoordinator
     coordinator = WorkerCoordinator(config_path, config_loader=config_loader)
-    next_poll = 0.0
-    platforms = None
+    validated_platforms = None
     try:
         while not stop.is_set():
             config = config_loader(config_path)
-            if config.enabled_platforms != platforms:
-                platforms = config.enabled_platforms
-                next_poll = 0.0
+            if config.enabled_platforms != validated_platforms:
+                if config.enabled_platforms:
+                    # Local construction/configuration checks only; no platform
+                    # reads may block the coordinator's scheduling thread.
+                    runtime = build(config)
+                    try:
+                        if not runtime.model.configured or not any(module.adapter.configured for module in runtime.modules.values()):
+                            raise ValueError("请先完成模型和平台配置")
+                    finally:
+                        runtime.close()
+                validated_platforms = config.enabled_platforms
             if not config.enabled_platforms:
+                prepare_store(config).set_setting("worker_heartbeat", time.time())
                 stop.wait(1)
-                next_poll = 0.0
                 continue
-            if time.monotonic() >= next_poll:
-                started = time.monotonic()
-                runtime = build(config)
-                try:
-                    if not runtime.model.configured or not any(module.adapter.configured for module in runtime.modules.values()):
-                        raise ValueError("请先填写本地模型配置并运行 login 完成扫码；可先运行 doctor 或 demo")
-                    if runtime.store.acquire_lease("worker_tick", time.time(), 1200):
-                        try:
-                            runtime.poll()
-                            runtime.poll_private()
-                            runtime.store.set_setting("last_tick", time.time())
-                        finally:
-                            runtime.store.release_lease("worker_tick")
-                finally:
-                    runtime.close()
-                next_poll = max(time.monotonic() + 1, started + min((getattr(module, "poll_seconds", 15) for module in runtime.modules.values()), default=15))
-                coordinator.start_background()
+            coordinator.poll(config)
+            coordinator.start_background()
             coordinator.pump(config)
+            prepare_store(config).set_setting("last_tick", time.time())
             stop.wait(1)
     finally:
         coordinator.close()

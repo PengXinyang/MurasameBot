@@ -9,7 +9,7 @@ function renderReceivers(data) {
   }
   const labels = {qq: 'QQ', bilibili: 'B站'};
   node.innerHTML = Object.entries(data.platforms).map(([name, service]) => {
-    const state = service.state === 'error' ? '启动异常' : service.running ? '服务运行中' : '未运行';
+    const state = service.state === 'stalled' ? '工作循环停滞' : service.state === 'error' ? '启动异常' : service.running ? '服务运行中' : '未运行';
     const description = service.mode === 'http' ? '签名事件接收 · 共用工作循环' : '通知与私信轮询 · 共用工作循环';
     return `<div class="panel settings-card"><div class="panel-title"><h3>${esc(labels[name] || name)}</h3><span class="pill">${esc(state)}</span></div><p class="notice">${esc(description)}</p>${service.error ? `<p class="notice" role="alert">${esc(service.error)}</p>` : ''}<div class="actions"><button type="button" data-receiver="${esc(name)}" data-operation="start" ${receiverBusy || service.running ? 'disabled' : ''}>启动${esc(labels[name] || name)}</button><button type="button" data-receiver="${esc(name)}" data-operation="stop" ${receiverBusy || (!service.selected && !service.enabled) ? 'disabled' : ''}>停止${esc(labels[name] || name)}</button></div></div>`;
   }).join('');
@@ -17,7 +17,8 @@ function renderReceivers(data) {
     button.onclick = () => controlReceiver(button.dataset.receiver, button.dataset.operation);
   });
   document.querySelector('#receiver-worker').textContent = data.worker_running
-    ? '共用工作循环已运行；各平台按上方选择接入。' : '工作循环未运行；启动任一平台后自动创建。';
+    ? data.worker_stalled ? '共用工作循环线程仍在，但任务进度停滞，请检查上方提示。' : '共用工作循环已运行；各平台按上方选择接入。启动QQ不会启动NapCat，无需另开run或qq-listen。'
+    : '工作循环未运行；启动任一平台后自动创建。';
 }
 
 async function controlReceiver(platform, operation) {

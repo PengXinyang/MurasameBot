@@ -81,9 +81,11 @@ class Runtime:
             raise ValueError("平台尚未启用或接入：" + name)
         return module.adapter
 
-    def poll(self, now=None):
+    def poll(self, now=None, *, platforms=None):
         now = time.time() if now is None else now
         for module in self.modules.values():
+            if platforms is not None and module.name not in platforms:
+                continue
             if getattr(module.adapter, "configured", True) and not self.engine.paused(module.name):
                 try:
                     module.poll(self, now)
@@ -91,9 +93,11 @@ class Runtime:
                     self.engine.pause_platform(exc, module.name)
                     self.store.audit("platform_poll_error", module.name + ": " + exc.code, now)
 
-    def poll_private(self, now=None):
+    def poll_private(self, now=None, *, platforms=None):
         now = time.time() if now is None else now
         for module in self.modules.values():
+            if platforms is not None and module.name not in platforms:
+                continue
             if getattr(module.adapter, "configured", True) and not self.engine.paused(module.name):
                 try:
                     module.poll_private(self, now)

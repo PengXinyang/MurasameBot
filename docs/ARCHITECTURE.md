@@ -1,5 +1,7 @@
 # 当前架构
 
+2026-11-05（D61）：worker在独占WorkerLock后仅恢复旧协调器读取租约。WorkerCoordinator以每平台最多一个Future调用Runtime.poll/poll_private(platforms=...)，完整身份/观察/路由Runtime保持；各收件任务与消息/审核/单sender共用原协调器及模型限流，线程池辅助容量为40。last_tick/worker_heartbeat表示调度推进，last_poll:<平台>表示该轮收件完成；适配器GET节奏不变。管理台读取心跳显示停滞并区分文件锁冲突/配置错误。SocialService上下文暂不可用只跳过，持久来源校验仍负责确认删除/撤权/过期后的清理。无schema迁移，详见D61、平台服务及社交状态说明。
+
 2026-11-05（D60）：网关在system末尾按本次私人操作限定decision。SocialEngine仅对模块声明免发布审核的private_chat兼容“有正文但decision键缺失”，保留显式决策与既有正文/来源/发送门禁；新增脱敏形状诊断。不增加模型请求、发送循环或schema，实际QQ排障与验证见QQ_PRIVATE_CHAT及VALIDATION。
 
 2026-11-04（D59）：Engine为现有三类私人文字生成附加内部_system_persona，ChatCompletionsModel按private_persona_system将已选配置放入system并从user JSON去重。信封在序列化前移除，外部资料仍保持数据角色；预算、模型限流/额度、原JSON/审核/outbox和epoch复验保持。无新循环或schema；其他操作与回退模式仍用原上下文。详见[操作说明](OPERATIONS.md)和D59。

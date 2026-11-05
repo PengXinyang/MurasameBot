@@ -51,7 +51,10 @@ class SocialService:
         for row in rows:
             source, state = row["source"], row["state"]
             if self._history_guard(source, now):
-                self.store.social_forget(row["state_id"], reason="source_invalidated")
+                # An unavailable observer or a temporary authorization read
+                # failure cannot prove deletion. SQLite pruning independently
+                # scrubs confirmed revocations, missing sources and expiry.
+                # Do not use this context now, or destroy accepted dialogue.
                 continue
             owner = source["subject_person_id"] == self.owner_person_id
             if due_only and (state["attention"] == "notice" or row["next_at"] > now or

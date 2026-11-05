@@ -16,15 +16,36 @@ class WorkerCoordinator:
     def __init__(self, config_path: Path, *, runtime_builder=build, config_loader=Config):
         self.path, self.build = config_path, runtime_builder
         self.config_loader = config_loader
-        self.pool = ThreadPoolExecutor(max_workers=35, thread_name_prefix="murasame")
+        # Up to 32 message jobs plus bounded poll/send/background/maintenance
+        # jobs. Polling must retain capacity at the maximum model lane setting.
+        self.pool = ThreadPoolExecutor(max_workers=40, thread_name_prefix="murasame")
         self.model_limit = ModelConcurrency(4)
         self.messages, self.background, self.sender, self.memory = [], None, None, None
         self.observer = None
+        self.pollers, self.next_polls, self.poll_intervals = {}, {}, {}
+        self.next_background = 0.0
 
     def job(self, kind):
         config = self.config_loader(self.path)
         runtime = self.build(config, concurrency=self.model_limit)
         try:
+            if kind.startswith("poll:"):
+                name = kind.split(":", 1)[1]
+                module = runtime.modules.get(name)
+                if module is None:
+                    return False
+                if not runtime.model.configured or not module.adapter.configured:
+                    raise ValueError("请先完成模型和平台配置")
+                lease = "worker_poll:" + name
+                if not runtime.store.acquire_lease(lease, time.time(), 1200):
+                    return False
+                try:
+                    runtime.poll(platforms=(name,))
+                    runtime.poll_private(platforms=(name,))
+                    runtime.store.set_setting("last_poll:" + name, time.time())
+                    return {"interval": max(1, module.poll_seconds)}
+                finally:
+                    runtime.store.release_lease(lease)
             if kind == "observation":
                 if not runtime.owner_history:
                     return False
@@ -54,7 +75,7 @@ class WorkerCoordinator:
 
     def collect(self, future):
         try:
-            future.result()
+            return future.result()
         except Exception as exc:
             # Do not log provider URLs, private text or credentials.
             LOG.error("后台任务失败：%s", type(exc).__name__)
@@ -70,6 +91,7 @@ class WorkerCoordinator:
                 remaining.append(future)
         self.messages = remaining
         store = prepare_store(config)
+        store.set_setting("worker_heartbeat", time.time())
         if self.observer is not None and self.observer.done():
             self.collect(self.observer)
             self.observer = None
@@ -101,10 +123,39 @@ class WorkerCoordinator:
                 self.memory = self.pool.submit(self.job,"memory")
 
     def start_background(self):
-        if self.background is None or self.background.done():
+        now = time.monotonic()
+        if now >= self.next_background and (self.background is None or self.background.done()):
             if self.background is not None:
                 self.collect(self.background)
             self.background = self.pool.submit(self.job, "background")
+            self.next_background = now + min(self.poll_intervals.values(), default=1)
+
+    def poll(self, config):
+        """One bounded read job per platform, inside the existing coordinator.
+
+        Keep the full runtime selection for identity, observations and routing;
+        only select the transport to poll. A slow platform never owns the pump.
+        Adapter-level persisted pacing and inbox cadence remain authoritative.
+        """
+        now = time.monotonic()
+        enabled = set(config.enabled_platforms)
+        for name in set(self.next_polls) - enabled:
+            self.next_polls.pop(name, None)
+            self.poll_intervals.pop(name, None)
+        for name in config.enabled_platforms:
+            pending = self.pollers.get(name)
+            if pending is not None:
+                if not pending.done():
+                    continue
+                result = self.collect(pending)
+                self.pollers.pop(name, None)
+                if isinstance(result, dict):
+                    self.poll_intervals[name] = result["interval"]
+                    self.next_polls[name] = now + result["interval"]
+            if now < self.next_polls.get(name, 0):
+                continue
+            self.pollers[name] = self.pool.submit(self.job, "poll:" + name)
+            self.next_polls[name] = now + self.poll_intervals.get(name, 1)
 
     def close(self):
         self.pool.shutdown(wait=True, cancel_futures=True)

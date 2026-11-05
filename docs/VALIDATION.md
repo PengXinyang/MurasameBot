@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-11-05：读取租约、独立收件与观察服务故障回归（D61）
+
+基准a7443ea，新增12项：独占OS锁后只恢复协调器读取租约；真冲突不清租约；accepted/unknown/sending不重投；阻塞一个平台时另一个收件、生成、回执落库继续且没有重复poll；保留完整Runtime平台选择；心跳停滞/恢复；配置错误与锁冲突分离；三类暂不可用观察服务不清已受理正文，恢复后有效线索仍可使用、真正清除来源仍清理并拒发。所有开发测试使用隔离数据/假平台。以旧HEAD函数在独立探针进程内复跑4项反例，全部按预期失败并复现旧缺陷，不修改工作树业务实现。
+
+D:/anaconda3/python.exe -X utf8 scripts/run_tests.py专项163通过、0失败，JUnit 61.855秒；后增补3项动作状态与本地预检后，最终完整tests --ignore=tests/test_persona_scope.py -k 'not persona'为1152通过、0失败/错误/运行时跳过，JUnit 423.105秒，3项按名称排除。报告.pytest-tmp/worker-social-recovery-targeted-final.xml及worker-social-recovery-full.xml；旧版本反例为worker-social-baseline-reproduced.xml。开发中的测试配置/回执领取/并发落库等待错误已修正。Node对两个内联脚本、receivers.js语法、两类fetch断连提示不含令牌/查询、POST零自动重试和停滞状态显示检查通过；未做完整浏览器截图验收。
+
+真实只读：QQ新消息在缓冲等待，旧worker_tick早于新worker启动；用户在旧租约到期后确认收到，当时新版未加载。两条被隐藏的已受理记录所引用观察/绑定/授权当前仍有效，未找到人工遗忘审计；旧实现临时服务失败路径可以复现，但历史具体触发未保存。已在没有在途任务/有效租约后重载原生服务，NapCat保持，原平台选择/暂停保持；新进程心跳和各平台收件推进、QQ无积压、无旧worker_tick。新版正常新来信获一条受理回执，本地正文正常，用户确认手机收到且管理台正文正常。没有恢复旧遗忘正文或重放失败/模糊发送，没有独立测试平台写入；正常业务实际调用不等于模拟测试。
+
+用户另报告未捕捉的瞬时前端错误。对同一正式管理台按页面6+3请求分组做3轮读取，再查config/social，29次均HTTP200及有效JSON，单次最多0.677秒；元数据在.pytest-tmp/dashboard-refresh-probe.json，无原始正文。此次未复现、不知道原失败端点，不能证明已经排除所有断连。Docker、真实压力长跑及其他模型中断结果缺口未验证/修复。人设范围、凭证/数据库/测试产物不进入提交。
+
 ## 2026-11-05：QQ入站生成协议修复与运行进程核验（D60）
 
 基准de75365，新增24项合成回归，含按操作限定响应协议、system位置、缺字段文字/分条恢复、免审核不依赖can_send、显式skip/null/异种decision保持、空正文/URL/分条不一致阻断、需审核渠道不恢复以及审计不泄露任意值/正文。D:/anaconda3/python.exe -X utf8 scripts/run_tests.py tests --ignore=tests/test_persona_scope.py -k 'not persona'最终1140通过，0失败/错误/运行时跳过，JUnit 290.560秒，3项按名称排除，报告.pytest-tmp/qq-inbound-recovery-full.xml。受限沙箱的兼容版专项为214通过、2项本机套接字WinError10013，放开回环权限后的最终全量已覆盖。此前1128项通过仅对应未加入缺字段恢复的中间版。

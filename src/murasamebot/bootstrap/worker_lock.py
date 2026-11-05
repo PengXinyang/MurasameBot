@@ -4,6 +4,10 @@ import os
 from murasamebot.domain.models import stable_id
 
 
+class WorkerConflictError(ValueError):
+    """Another process owns this agent/database's sole decision worker."""
+
+
 class WorkerLock:
     def __init__(self, config):
         database = config.file("database")
@@ -27,7 +31,7 @@ class WorkerLock:
         except OSError:
             self.file.close()
             self.file = None
-            raise ValueError("同一角色的工作循环已在其他进程运行，请先停止原工作进程") from None
+            raise WorkerConflictError("同一角色的工作循环已在其他进程运行，请先停止原工作进程") from None
         return self
 
     def __exit__(self, *args):
