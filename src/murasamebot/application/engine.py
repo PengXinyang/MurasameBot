@@ -69,6 +69,10 @@ class SocialEngine:
     def message_decision(self, operation, payload, platform, account_id, channel, now):
         if channel == "private":
             payload = {**payload,"private_policy":dict(self.private_policies.get(platform,{}))}
+            if operation in {"private_chat", "autonomous_private", "private_task_result"}:
+                # This persona was selected by the application, after the caller's
+                # identity/channel checks. Never derive this envelope from a message.
+                payload = {**payload, "_system_persona": payload["persona"]}
         if operation in {"reply","private_chat","autonomous_post","autonomous_private"}:
             social = self.settings.social
             payload = {**payload,"social_rules":{"enabled":social.enabled,"ttl_hours":social.ttl_hours,

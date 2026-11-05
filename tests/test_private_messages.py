@@ -161,6 +161,7 @@ def test_private_daily_chat_uses_history_without_creating_video_task(factory, no
     payload = [p for op, p in model.calls if op == "private_chat"][-1]
     assert any(row["speaker"] == "agent" for row in payload["history"])
     assert payload["owner_addressed"] and payload["intent_result"]["kind"] == "none"
+    assert payload["_system_persona"] == payload["persona"]
     assert store.inspect("tasks") == []
     assert len(store.inspect("actions")) == 2  # Multiple replies in one conversation are allowed.
 

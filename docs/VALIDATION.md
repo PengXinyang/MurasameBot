@@ -1,5 +1,15 @@
 # 验证记录
 
+## 2026-11-05：请求级私人system配置完整验证（D59）
+
+开发基准fa75ca4。D:/anaconda3/python.exe -X utf8、scripts/run_tests.py及忽略目录测试依赖，模拟HTTP/假平台/隔离数据库。新增tests/test_private_prompt_requests.py 20项合成协议用例；专项132通过，0失败/错误，16.064秒（.pytest-tmp/private-system-targeted.xml）。完整tests --ignore=tests/test_persona_scope.py -k 'not persona'共1116通过，0失败/错误/运行时跳过，273.394秒（.pytest-tmp/private-system-full.xml）；排除的人设用例不计入运行数。
+
+请求捕获确认应用层信封只驱动三类私人文字操作、所选文本在system且user不重复，内部字段不发给API；回退/缺信封/其他操作保留原数据格式。外部system字样、历史/摘要仍为数据；配置和超限/不一致信封在模型额度前拒绝。QQ免发布审核、JSON/thinking、必要skip、服务端content_filter/length/坏JSON失败行为和生成期间遗忘失效仍可复现。并未修复此前aborted/insufficient_system_resource旧缺口，不以全套通过作此结论。
+
+实际API仅使用合成人设与两个正常场景，各以context/system模式一次，共4次；均有效JSON、stop及reply。temperature=0.8、max_tokens=800、thinking disabled，未使用真实私人profile或平台聊天/观看记录。输入8134、输出184、总8318 token，累计5.76秒；服务返回deepseek-flash别名，精确版本未知，无费用估算。前后两组均未拒答，不能认定拒答率下降或“永不拒答”。结果.pytest-tmp/private-system-live/results.json与脚本/隔离库均不提交。
+
+最新profile仅第58行正文补两个空格，字句不变；YAML解析恢复正常，其他人设内容及settings.yml/备份未改。未操作正式进程、容器或社交写入；QQ不回复问题在本项完成后单独排查。项目记忆明确区分已编码/模拟通过/真实API可用/未验证效果；提交前审查UTF-8、链接、围栏、差异及文件范围。
+
 ## 2026-11-04：指定私人助手提示词追加与加载
 
 以55ab442的profile为基准，使用D:/anaconda3/python.exe -X utf8解析修改前后YAML，确认字段集合一致、仅private_owner_context变化、旧字段值为新值的完整前缀；用户给出的五句原文均存在。直接调用现有load_persona，确认五句均载入private_owner_context，未打印原有私人内容。原始来源、公共风格、示例及程序无本轮差异，git diff --check通过。

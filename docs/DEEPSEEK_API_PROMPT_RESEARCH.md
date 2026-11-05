@@ -1,5 +1,7 @@
 # DeepSeek API提示词与“破甲”调研
 
+2026-11-04请求级实现补充（D59）：程序选定的私人角色配置现可进入system，user JSON去重，信封不发API；model.private_persona_system默认true并可回退。仅私人文字三类操作，保持JSON、必要skip、程序权限和渠道审核，未安装宿主补丁或承诺服务端永不拒答。4次合成正常请求对照均正常返回，前后都无拒答，不证明拒答率下降；详见VALIDATION。下文研究与历史状态保留原日期边界。
+
 2026-11-04指定项目补充：已读取HunYiSage/dsh-purge与用户给出的xuanmingguo/dsh-infinite-gen-2 fork的关键源码，区分宿主补丁、提示词装配和词表状态徽标。按用户后续指令仅将分层/场景选择/短锚点写法用于派生profile，新增6次固定0.8的真实API初步对照；没有安装插件或改变请求/权限链路。来源blob、迁移点和未实现范围见[专题](DSH_PROMPT_MIGRATION.md)。
 
 ## 2026-11-04：自然对话方案已编码

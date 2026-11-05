@@ -186,7 +186,8 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
                                      timezone=config.data["timezone"], daily_limit=m["daily_call_limit"],
                                      timeout=m["timeout_seconds"], max_context=m["max_context_characters"], proxy_url=config.network_proxy,
                                      max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency,
-                                     chat_temperature=m["chat_temperature"], private_multiturn=m["private_multiturn"])
+                                     chat_temperature=m["chat_temperature"], private_multiturn=m["private_multiturn"],
+                                     private_persona_system=m["private_persona_system"])
         persona = load_persona(config.file("character_source"), config.file("character_profile"))
         v = config.data.get("vision", {})
         vision_settings = VisionSettings(**{key: v[key] for key in VisionSettings.__dataclass_fields__ if key in v})
@@ -201,7 +202,8 @@ def build(config: Config, *, concurrency=None, platform_factories=None) -> Runti
             vision_model = ChatCompletionsModel(base_url=base, name=v.get("name") or m["name"], api_key=key, store=store,
                                                timezone=config.data["timezone"], daily_limit=m["daily_call_limit"], timeout=m["timeout_seconds"],
                                                max_context=m["max_context_characters"], proxy_url=config.network_proxy, max_output_tokens=m.get("max_output_tokens"), concurrency=concurrency,
-                                               chat_temperature=m["chat_temperature"], private_multiturn=m["private_multiturn"])
+                                               chat_temperature=m["chat_temperature"], private_multiturn=m["private_multiturn"],
+                                               private_persona_system=m["private_persona_system"])
             resources.append(vision_model)
         vision = VisionService(vision_settings, reader, vision_model, store, model_name=v.get("name") or m["name"])
         e = config.data.get("expressions", {})

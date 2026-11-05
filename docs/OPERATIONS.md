@@ -1,5 +1,7 @@
 # 配置、运行与排障
 
+2026-11-04（D59）：新增model.private_persona_system，旧配置默认补true，私人文字回复/主动私聊/视频结果把程序已选人设放进system；并不关闭服务端过滤。需要回退时在config.local.yml的model段设private_persona_system: false，验证仅接受布尔值，没有新增管理台控件。装配新代码需重启实际Python进程或重建旧Docker镜像；本轮未操作正式进程。最新仓库profile修复了一行正文缩进，保留原字句，既有卷应只同步对应缩进，避免覆盖用户新增内容。已存草稿不重写，结果未知不重放。
+
 2026-11-04私人提示词追加：当前仓库profile的private_owner_context末尾新增用户指定的五句私人助手提示词，其他字段保持。标准worker新任务创建Runtime时读取实际profile，正在生成的任务仍使用其已加载快照；长持有的人设实例需重新加载。Docker既有卷需仅追加这段内容并保留原私有字段，不用整份覆盖。此项没有重启正式服务或同步既有卷，不改历史草稿。
 
 2026-11-04人设后续：派生profile的style已分段、examples增为10组；只需让实际人设实例重新加载该文件，模型参数/收发链路没有新增变化。使用仓库profile的新进程会加载新版；现有进程不宣称自动热更新。Docker既有卷的profile不会由种子覆盖，需单独同步style/examples并保留其他字段。源码学习和6次合成场景真实API结果见[DSH提示词迁移](DSH_PROMPT_MIGRATION.md)，没有安装DSH插件或重启正式服务。

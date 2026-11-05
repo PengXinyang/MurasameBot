@@ -1,5 +1,15 @@
 # 已确认的重要决策
 
+## D59：私人文字生成使用程序选定的system人设（2026-11-04）
+
+用户要求把请求级提示词注入接入项目以减少拒答。本轮落实的是应用选定的人设进入system，不承诺DeepSeek官方API永不拒答，不移植宿主补丁、无条件服从模板或拒答循环改写。新增model.private_persona_system，默认true，可设false回退。
+
+Engine仅在channel=private且操作为private_chat/autonomous_private/private_task_result时，将已有persona写入内部_system_persona信封。该文本已由原调用路径按身份/用途选好，模型与外部消息不能选角色或收件人。网关仅消费这些操作的显式信封，验证文本完整且与persona一致，将其放入system并移除user JSON中的重复persona；信封本身不发给API。原文超限/不匹配在模型额度预留前拒绝，新增system文本计入原应用侧输入字符预算；不静默截断角色配置。
+
+普通来信、历史、事实/摘要、图片和任务资料仍为数据，真实多轮保持，JSON/必要skip、程序权限与渠道审核保持；QQ私人文字仍免发布审核，不增加can_send授权。其他操作、缺信封调用及关闭开关时保留原组织方式。没有新模型/发送循环、额外润色请求或schema迁移。
+
+本条细化D57中私人文字人设原位于最后JSON中的消息组织；不改变public/group/call、review/maintenance的人设组织和来源策略。最新fa75ca4的profile只有一行正文缩进修复，文字保持；不借此改写用户人设。独立结果分类和aborted/insufficient_system_resource旧缺口仍待处理，不能以本次测试总数认定其已修复。
+
 ## D58：人工评论状态核查不参与自动读取排队（2026-11-04）
 
 用户明确要求点击按钮查state时直接调用，读取排队用于约束自动流程。管理台publication/check及显式CLI comment-check由装配层声明manual=true，应用服务将该标记传给发布核查端口；默认false的普通调用继续走原节奏。B站适配器将人工范围限定为本次nav及目标评论列表GET，RequestMonitor在检查通道冷却后跳过request_slot，不占用或推迟自动读取槽位，仍记录脱敏请求结果并共享-509/429退避。

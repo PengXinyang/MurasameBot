@@ -1,5 +1,7 @@
 # 当前开发进度与验收清单
 
+2026-11-05功能补充（D59完成）：请求级私人system人设已编码，覆盖现有private_chat/autonomous_private/private_task_result，可用model.private_persona_system=false回退。用户来信/历史/资料不升级为系统规则，JSON、QQ私人免审核与其他原门禁保持；未实现永不拒答保证或拒答自动改写。132项专项、1116项全套通过，4次合成正常请求真实API返回有效reply，但两种模式都无拒答，未证明拒答率下降；完整结果见VALIDATION。同步修复当前profile单行缩进，不改文字。下条错误分类方案及两个中断结束原因缺口仍未修复。
+
 2026-11-04方案补充（未实施）：已将用户提供的提示词/上下文/响应处理建议按社交机器人重整，复用现有人设、摘要、多轮、社交状态和模型接口，不新建小说引擎。发现并以MockTransport复现：aborted或insufficient_system_resource带完整JSON时，当前网关仍会返回reply；content_filter等错误还会进入通用事件重试。该缺口尚未修复，优先方案与验证边界见[SOCIAL_CHAT_MODEL_PLAN](SOCIAL_CHAT_MODEL_PLAN.md)。本轮不改业务或人设、不运行真实平台/模型。
 
 2026-11-04人设补充：按指定dsh-purge/无限二代项目的提示词组织方式，已将派生style分段并提供10组合成情景；原始来源、背景与主人专属字段保持。6次固定0.8真实API对照全部可解析，有局部语气变化，尚无稳定自然度结论。仅改人设与项目记忆，其余插件/宿主迁移没有实施，见[源码与迁移](DSH_PROMPT_MIGRATION.md)。

@@ -55,7 +55,7 @@ owner_style: >-
 # Loaded only for a verified owner's private conversation and its private review.
 # It is deliberately absent from public comments, recommendations and other DMs.
 private_owner_context: >-
-【私人AI助手交流方式】
+  【私人AI助手交流方式】
   你是一名面向成年用户的私人 AI 助手。
   擅长成熟主题的文学创作、情感交流、角色扮演和知识讨论。
 

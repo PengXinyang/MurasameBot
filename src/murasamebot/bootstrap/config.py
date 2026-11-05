@@ -92,7 +92,7 @@ class Config:
         from murasamebot.adapters.network import DIRECT_DOMAINS, GFWLIST_URL
         raw = merge({"platforms":{"bilibili":{"enabled":True}},"social":asdict(SocialSettings()),"requests":asdict(RequestSettings()),"owner_history":asdict(OwnerHistorySettings()),"memory":asdict(MemorySettings()),"review":{"strategy":"inline"},
                      "bilibili":{"private_poll_seconds":90},
-                     "model":{"chat_temperature":0.8,"private_multiturn":True},
+                     "model":{"chat_temperature":0.8,"private_multiturn":True,"private_persona_system":True},
                      "autonomy":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_space":{**asdict(AutonomySettings()),"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
                      "qq_autonomy":{**asdict(AutonomySettings()),"daily_decision_limit":32,"windows":[{"start":"09:00","end":"22:00"}],"weekdays":list(range(7)),"topics":["游戏与创作","生活中的小想法"]},
@@ -307,6 +307,8 @@ class Config:
             raise ValueError("chat_temperature 需要为0至2的有限数值")
         if type(data.get("model", {}).get("private_multiturn", True)) is not bool:
             raise ValueError("private_multiturn 需要为布尔值")
+        if type(data.get("model", {}).get("private_persona_system", True)) is not bool:
+            raise ValueError("private_persona_system 需要为布尔值")
         output_limit = data.get("model", {}).get("max_output_tokens")
         if output_limit is not None and (type(output_limit) is not int or output_limit < 1):
             raise ValueError("max_output_tokens 应为 null（使用服务默认值）或正整数；具体上限由模型服务决定")
@@ -493,7 +495,7 @@ class Config:
             raise ValueError("来源密钥和转载授权请在本地配置文件中管理")
         if set(patch.get("vision", {})) - {"enabled", "max_images", "detail", "video_frames_enabled", "video_frame_count", "video_frame_max_parts"}:
             raise ValueError("视觉服务密钥与网络来源请在本地文件配置")
-        if set(patch.get("model", {})) - {"daily_call_limit", "chat_temperature", "private_multiturn"}:
+        if set(patch.get("model", {})) - {"daily_call_limit", "chat_temperature", "private_multiturn", "private_persona_system"}:
             raise ValueError("模型密钥、地址与模型名称请在本地文件配置")
         if set(patch.get("processing", {})) - {"model_concurrency"}:
             raise ValueError("未知的并发处理设置")

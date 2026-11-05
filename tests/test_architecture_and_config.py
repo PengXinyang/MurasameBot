@@ -71,16 +71,21 @@ def test_dialogue_defaults_and_local_override_are_validated_and_preserved(tmp_pa
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["model"].pop("chat_temperature")
     data["model"].pop("private_multiturn")
+    data["model"].pop("private_persona_system")
     path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
     config = Config(path)
     assert config.data["model"]["chat_temperature"] == 0.8
     assert config.data["model"]["private_multiturn"] is True
-    config.save_local({"model": {"chat_temperature": 0.5, "private_multiturn": False}})
+    assert config.data["model"]["private_persona_system"] is True
+    config.save_local({"model": {"chat_temperature": 0.5, "private_multiturn": False, "private_persona_system": False}})
     loaded = Config(path)
     assert loaded.data["model"]["chat_temperature"] == 0.5
     assert loaded.data["model"]["private_multiturn"] is False
+    assert loaded.data["model"]["private_persona_system"] is False
     with pytest.raises(ValueError, match="private_multiturn"):
         loaded.save_local({"model": {"private_multiturn": "false"}})
+    with pytest.raises(ValueError, match="private_persona_system"):
+        loaded.save_local({"model": {"private_persona_system": 1}})
 
 
 def test_revoked_binding_is_not_resurrected_on_restart(tmp_path):

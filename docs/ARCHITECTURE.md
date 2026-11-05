@@ -1,5 +1,7 @@
 # 当前架构
 
+2026-11-04（D59）：Engine为现有三类私人文字生成附加内部_system_persona，ChatCompletionsModel按private_persona_system将已选配置放入system并从user JSON去重。信封在序列化前移除，外部资料仍保持数据角色；预算、模型限流/额度、原JSON/审核/outbox和epoch复验保持。无新循环或schema；其他操作与回退模式仍用原上下文。详见[操作说明](OPERATIONS.md)和D59。
+
 2026-11-04（D58）：人工publication/check和CLI comment-check显式传manual=true至PublicationService/PublicationProbe；B站适配器用RequestMonitor的ContextVar范围仅豁免本次nav/评论列表GET的自动间隔槽位。检查冷却在豁免之前，请求结果/退避照常持久化；默认调用、其他路径及并发线程继续共享自动GET节奏，无新增工作循环或schema变更。
 
 2026-11-04（D57）：MemoryService在既有预算/范围选择后给私人context增加内部_dialogue_sources来源名单；ChatCompletionsModel仅在private_chat将同账号/会话的实际用户和已受理agent档案展开为user/assistant正文投影，从末条JSON history去重。公开/跨平台回忆仍为资料，外部文本不能指定协议角色；不读额外数据库或建立第二套记忆/模型循环。聊天温度默认0.8，其他结构任务维持原值；Config兼容旧配置并装配两个新开关。原epoch失效链和JSON/审核保持。详见[丛雨风格实现](CONGYU_DIALOGUE_STYLE.md)。
