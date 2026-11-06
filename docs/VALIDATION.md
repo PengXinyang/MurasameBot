@@ -1,5 +1,13 @@
 # 验证记录
 
+## 2026-11-06：QQ设置与消息记录拆页
+
+基准c1f52dc，仅前端与项目记忆变更。现有tests/test_web.py、test_platform_console.py、test_qq_publication.py共40项通过，0失败/错误/跳过，JUnit 28.154秒；报告.pytest-tmp/qq-pages-targeted.xml。初次沙箱运行17项因本机连接WinError10013失败，放开回环连接后原40项通过。没有运行人设范围或全套业务回归。
+
+隔离Edge：1440/390各QQ设置和记录页，共4视图、6张截图；确认所有设置控件与私聊/群聊/动作记录归属独立，DOM ID唯一，私群归档不混合；导航/标题/双向跳转、设置保存隔离、已发送/失败/未知/待处理/待审5类筛选、原草稿取消及unknown保护、两页hash与筛选刷新恢复通过。无横向溢出、0脚本异常，最终截图已查看。使用合成来信/受理回执和隔离数据库，没有worker或外部平台/模型调用；证据.pytest-tmp/qq-pages-browser/report.json及PNG不提交。
+
+运行中管理台仅GET读取HTML/QQ脚本/CSS，最终3项均HTTP200且与工作区一致，no-store；HTML比较遵循服务端文本换行规则。前端每次请求重新读文件，未重启/暂停QQ或NapCat，刷新页面生效。此检查不是实际QQ收发验收；正式配置/数据库未修改，Docker未重建。
+
 ## 2026-11-05：视频选择门槛与独占监听（D62/D63）
 
 基准5ab8d0d。新增视频36项、监听3项回归，均为隔离状态/假模型/MockTransport或本机套接字。视频专项141通过（38.095秒）；中间完整1186通过（303.901秒），视频最终版1188通过（297.040秒）。加入管理台/QQ回调独占监听的前两项回归后，全套tests --ignore=tests/test_persona_scope.py -k 'not persona'为1190通过、0失败/错误/运行时跳过，JUnit 339.994秒，3项按名称排除，报告.pytest-tmp/video-selection-exclusive-full.xml。全量收集后补入的第三项“真实回环请求后立即重启”，由17项启停/容器装配专项覆盖并通过（9.403秒，exclusive-http-final-targeted.xml），不冒充此前全量已运行该项。人设范围测试没有运行。

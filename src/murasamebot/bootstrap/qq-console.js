@@ -58,7 +58,7 @@ async function saveQQSpace() {
     }));
     await api('config', {qq_space:settings});
     await loadConfig(); await refresh();
-    notice('空间设置已保存；保持QQ服务运行，可在下方查看说说计划和回执。');
+    notice('空间设置已保存；保持QQ服务运行，可在“私聊与群聊记录”页查看说说计划和回执。');
   } catch (e) { notice(e.message, true); }
 }
 
@@ -100,7 +100,7 @@ function renderQQConsole(data) {
     : status.state ? `${stateNames[status.state] || status.state} · 上次判断 ${time(status.at)}${status.planned_at ? ' · 计划时间 '+time(status.planned_at) : ''} · 下次检查 ${time(status.next_at)}`
     : '主动私聊已开启，等待工作循环首次判断。';
   document.querySelector('#qq-module-state').textContent = data.enabled ? '模块已启用' : '模块未启用';
-  document.querySelector('#qq-overview-state').textContent = data.enabled ? '已启用 · 私聊与消息中管理' : '未启用';
+  document.querySelector('#qq-overview-state').textContent = data.enabled ? '已启用 · QQ设置中管理' : '未启用';
   document.querySelector('#qq-robot').textContent = connection.robot_id || '未配置';
   document.querySelector('#qq-owner').textContent = data.owner_id || '未绑定';
   document.querySelector('#qq-api').textContent = connection.api_url;
@@ -141,7 +141,7 @@ function renderQQConsole(data) {
 Object.assign(emptyCopies, {
   'qq-conversations': ['还没有QQ聊天归档', '启用接收器与工作循环后，已处理来信及被平台受理的回复会出现在这里。'],
   'qq-pending-events': ['没有等待处理的消息', '私聊先进入静默窗口；群聊被@或引用丛雨时进入处理队列。'],
-  'qq-actions': ['还没有QQ相关发送记录', 'QQ私聊回复、视频结果及由QQ委托产生的公开投递会单独显示。'],
+  'qq-actions': ['还没有QQ相关发送记录', '私聊与群聊回复、视频结果、空间说说及QQ委托产生的公开投递会显示在这里。'],
   'qq-tasklist': ['还没有来自QQ的视频委托', '在QQ告诉丛雨想看什么；默认回QQ，也可以明确要求在B站提及。']
 });
 
